@@ -1,0 +1,37 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "HiTech Dairy Farm Backend (Node + Express)",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js",
+    "lint": "echo \"No linter configured\"",
+    "test": "echo \"No tests yet\"",
+    "build": "echo 'No build step needed for Node.js'"
+  },
+  "keywords": [],
+  "author": "HiTech Dairy Farm",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^7.1.0",
+    "mongoose": "^8.20.0",
+    "morgan": "^1.10.0",
+    "nodemailer": "^8.0.1",
+    "pdfkit": "^0.15.0",
+    "pdfkit-table": "^0.1.99",
+    "qrcode": "^1.5.4",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

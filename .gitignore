@@ -1,0 +1,12 @@
+# Documentation files
+DATABASE_SCHEMA_INFO.md
+MONGODB_INTEGRATION_COMPLETE.md
+POSTMAN_SIGNUP_TEST.md
+ROLE_USAGE_GUIDE.md
+
+/frontend/EMULATOR_TROUBLESHOOTING.md
+/frontend/SOLUTION_LINES_41-52.md
+/frontend/fix-emulator.ps1
+/frontend/start-emulator-timeout-fix.ps1
+./node_modules
+/node_modules

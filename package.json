@@ -1,0 +1,27 @@
+{
+  "name": "rdf---copy",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c \"bgBlue.bold,bgGreen.bold\" \"npm run dev --prefix backend\" \"npm start --prefix frontend\"",
+    "dev:reset": "concurrently -n backend,frontend -c \"bgBlue.bold,bgGreen.bold\" \"npm run dev --prefix backend\" \"npm run start:reset --prefix frontend\"",
+    "dev:android": "concurrently -n backend,frontend,android -c \"bgBlue.bold,bgGreen.bold,bgMagenta.bold\" \"npm run dev --prefix backend\" \"npm start --prefix frontend\" \"npm run android --prefix frontend\"",
+    "dev:android:reset": "concurrently -n backend,frontend,android -c \"bgBlue.bold,bgGreen.bold,bgMagenta.bold\" \"npm run dev --prefix backend\" \"npm run start:reset --prefix frontend\" \"npm run android --prefix frontend\"",
+    "android": "npm run dev:android",
+    "android:reset": "npm run dev:android:reset",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm start --prefix frontend",
+    "dev:frontend:reset": "npm run start:reset --prefix frontend",
+    "start": "npm run dev",
+    "start:reset": "npm run dev:reset",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
