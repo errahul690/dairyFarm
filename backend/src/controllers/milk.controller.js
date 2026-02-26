@@ -137,12 +137,14 @@ const quickSaleSchema = z.object({
   buyerMobile: z.string().min(10).max(10).regex(/^[0-9]+$/),
   quantity: z.number().positive().optional(),
   pricePerLiter: z.number().nonnegative().optional(),
+  milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional()
 });
 
 /**
  * Quick Sale: record today's delivery for a buyer using their set rate/quantity.
- * POST body: { buyerMobile } for "Delivered" (use buyer's set quantity & rate),
- * or { buyerMobile, quantity?, pricePerLiter? } for "Custom Delivered".
+ * POST body: { buyerMobile } for "Delivered" (use buyer's deliveryItems or single quantity & rate),
+ * or { buyerMobile, quantity?, pricePerLiter?, milkSource? } for "Custom Delivered".
+ * When buyer has deliveryItems, "Delivered" creates one transaction per item.
  */
 const createQuickSale = async (req, res) => {
   const parsed = quickSaleSchema.safeParse(req.body);
@@ -151,6 +153,7 @@ const createQuickSale = async (req, res) => {
   const buyerMobile = parsed.data.buyerMobile.trim();
   let quantity = parsed.data.quantity;
   let pricePerLiter = parsed.data.pricePerLiter;
+  const bodyMilkSource = parsed.data.milkSource;
 
   try {
     const user = await findUserByMobile(buyerMobile);
@@ -159,26 +162,71 @@ const createQuickSale = async (req, res) => {
     const buyer = await findBuyerByUserId(user._id);
     if (!buyer) return res.status(404).json({ error: "Buyer profile not found." });
 
+    const today = getStartOfTodayIST();
+    const buyerName = user.name || buyer.name;
+
+    // "Delivered" (no custom qty/rate): use deliveryItems if set, else single quantity/rate/milkSource
+    if ((quantity == null || quantity <= 0) && (pricePerLiter == null || pricePerLiter < 0)) {
+      const items = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0
+        ? buyer.deliveryItems
+        : null;
+
+      if (items && items.length > 0) {
+        const transactions = [];
+        for (const item of items) {
+          const q = Number(item.quantity) || 0;
+          const r = Number(item.rate) || 0;
+          const src = (item.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(String(item.milkSource).toLowerCase()))
+            ? String(item.milkSource).toLowerCase()
+            : "cow";
+          if (!q || !r) continue;
+          const totalAmount = Math.round(q * r * 100) / 100;
+          const payload = {
+            date: today.toISOString(),
+            quantity: q,
+            pricePerLiter: r,
+            totalAmount,
+            buyer: buyerName,
+            buyerPhone: buyerMobile,
+            paymentType: "credit",
+            notes: "Quick sale",
+            milkSource: src,
+          };
+          const tx = await addMilkTransaction({ type: "sale", ...payload });
+          transactions.push(tx);
+        }
+        if (transactions.length === 0) {
+          return res.status(400).json({
+            error: "Buyer deliveryItems have no valid quantity/rate. Add at least one milk type with quantity and rate.",
+          });
+        }
+        return res.status(201).json({ transactions });
+      }
+
+      quantity = Number(buyer.quantity) || 0;
+      pricePerLiter = Number(buyer.rate) || 0;
+    }
+
     if (quantity == null || quantity <= 0) quantity = Number(buyer.quantity) || 0;
     if (pricePerLiter == null || pricePerLiter < 0) pricePerLiter = Number(buyer.rate) || 0;
     if (!quantity || !pricePerLiter) {
       return res.status(400).json({
-        error: "Set buyer's daily quantity and rate first, or pass quantity and pricePerLiter.",
+        error: "Set buyer's daily quantity and rate (or delivery items) first, or pass quantity and pricePerLiter.",
       });
     }
 
     const totalAmount = Math.round(quantity * pricePerLiter * 100) / 100;
-    const today = getStartOfTodayIST();
-
-    const milkSource = (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(String(buyer.milkSource).toLowerCase()))
-      ? String(buyer.milkSource).toLowerCase()
-      : 'cow';
+    const milkSource = (bodyMilkSource && ["cow", "buffalo", "sheep", "goat"].includes(bodyMilkSource))
+      ? bodyMilkSource
+      : (buyer.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(String(buyer.milkSource).toLowerCase()))
+        ? String(buyer.milkSource).toLowerCase()
+        : "cow";
     const payload = {
       date: today.toISOString(),
       quantity,
       pricePerLiter,
       totalAmount,
-      buyer: user.name || buyer.name,
+      buyer: buyerName,
       buyerPhone: buyerMobile,
       paymentType: "credit",
       notes: "Quick sale",

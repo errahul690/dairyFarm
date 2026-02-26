@@ -36,6 +36,17 @@ const BuyerSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  // Multiple milk types per delivery: e.g. [{ milkSource: 'cow', quantity: 1, rate: 60 }, { milkSource: 'buffalo', quantity: 1.5, rate: 70 }]
+  // When set, Quick Sale "Delivered" creates one transaction per item.
+  deliveryItems: {
+    type: [{
+      milkSource: { type: String, enum: ['cow', 'buffalo', 'sheep', 'goat'], required: true },
+      quantity: { type: Number, required: true, min: 0 },
+      rate: { type: Number, required: true, min: 0 }
+    }],
+    required: false,
+    default: undefined
+  },
   // Delivery schedule: show in Quick Sale only on these days (0=Sun, 1=Mon, ..., 6=Sat). Empty = daily.
   deliveryDays: {
     type: [Number],

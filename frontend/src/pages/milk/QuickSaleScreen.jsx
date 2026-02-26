@@ -121,17 +121,26 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
         const deliveredToday = today.length > 0;
         const todayQty = today.reduce((s, t) => s + (Number(t.quantity) || 0), 0);
         const todayAmt = today.reduce((s, t) => s + (Number(t.totalAmount) || 0), 0);
-        const todayMilkSource = today[0]?.milkSource || b.milkSource || 'cow';
-        const milkSourceLabel = MILK_SOURCE_TYPES.find((s) => s.value === todayMilkSource)?.label || todayMilkSource || 'Cow';
+        const todayLines = today.map((t) => {
+          const src = t.milkSource || 'cow';
+          const label = MILK_SOURCE_TYPES.find((s) => s.value === src)?.label || src;
+          return { milkSource: src, label, quantity: Number(t.quantity) || 0, totalAmount: Number(t.totalAmount) || 0 };
+        });
+        const hasDeliveryItems = Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0;
+        const dailyQuantity = hasDeliveryItems
+          ? b.deliveryItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
+          : (Number(b.quantity) || 0);
+        const rate = hasDeliveryItems && b.deliveryItems[0] ? Number(b.deliveryItems[0].rate) || 0 : (Number(b.rate) || 0);
         return {
           ...b,
           mobile,
-          rate: Number(b.rate) || 0,
-          dailyQuantity: Number(b.quantity) || 0,
+          rate,
+          dailyQuantity,
           deliveredToday,
           todayQuantity: todayQty,
           todayAmount: todayAmt,
-          todayMilkSourceLabel: milkSourceLabel,
+          todayLines,
+          deliveryItems: b.deliveryItems,
         };
       });
     return list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'en'));
@@ -152,8 +161,8 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       Alert.alert('Already delivered', `${buyer.name} already has a sale recorded for today.`);
       return;
     }
-    if (!(buyer.dailyQuantity > 0 && buyer.rate >= 0)) {
-      Alert.alert('Set rate & quantity', 'Set this buyer\'s daily quantity and rate in Buyer screen first.');
+    if (!(buyer.dailyQuantity > 0 && (buyer.rate >= 0 || (buyer.deliveryItems && buyer.deliveryItems.length > 0)))) {
+      Alert.alert('Set rate & quantity', 'Set this buyer\'s milk delivery items (or daily quantity and rate) in Buyer screen first.');
       return;
     }
     try {
@@ -173,6 +182,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       ...buyer,
       quantity: String(buyer.dailyQuantity || ''),
       pricePerLiter: String(buyer.rate || ''),
+      milkSource: buyer.milkSource || 'cow',
     });
   };
 
@@ -186,7 +196,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
     try {
       setActionLoading(customModal.mobile);
-      await milkService.quickSale(customModal.mobile, q, p);
+      await milkService.quickSale(customModal.mobile, q, p, customModal.milkSource);
       setCustomModal(null);
       await loadData();
     } catch (e) {
@@ -228,14 +238,28 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                     {b.deliveredToday ? (
                       <View style={styles.badge}>
                         <Text style={styles.badgeText}>Delivered</Text>
-                        <Text style={styles.badgeSub}>{b.todayMilkSourceLabel} · {b.todayQuantity.toFixed(2)} L · {formatCurrency(b.todayAmount)}</Text>
+                        {b.todayLines && b.todayLines.length > 0 ? (
+                          b.todayLines.map((line, i) => (
+                            <Text key={i} style={styles.badgeSub}>
+                              {line.label} {line.quantity.toFixed(2)} L @ {formatCurrency(line.totalAmount / line.quantity)}/L → {formatCurrency(line.totalAmount)}
+                            </Text>
+                          ))
+                        ) : (
+                          <Text style={styles.badgeSub}>{b.todayQuantity.toFixed(2)} L · {formatCurrency(b.todayAmount)}</Text>
+                        )}
+                        <Text style={styles.badgeTotal}>Total: {b.todayQuantity.toFixed(2)} L · {formatCurrency(b.todayAmount)}</Text>
                       </View>
                     ) : (
                       <Text style={styles.notDelivered}>Not delivered</Text>
                     )}
                   </View>
                   <Text style={styles.detail}>
-                    {b.dailyQuantity.toFixed(2)} L/day @ {formatCurrency(b.rate)}/L
+                    {b.deliveryItems && b.deliveryItems.length > 0
+                      ? b.deliveryItems.map((it, i) => {
+                          const label = MILK_SOURCE_TYPES.find((s) => s.value === it.milkSource)?.label || it.milkSource;
+                          return `${(Number(it.quantity) || 0).toFixed(2)} L ${label} @ ${formatCurrency(Number(it.rate) || 0)}/L`;
+                        }).join(' · ')
+                      : `${b.dailyQuantity.toFixed(2)} L/day @ ${formatCurrency(b.rate)}/L`}
                   </Text>
                   <View style={styles.buttons}>
                     <TouchableOpacity
@@ -248,11 +272,11 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.btn, styles.btnCustom, b.deliveredToday && styles.btnDisabled]}
+                      style={[styles.btn, styles.btnCustom, actionLoading !== null && styles.btnDisabled]}
                       onPress={() => handleCustomDelivered(b)}
-                      disabled={b.deliveredToday || actionLoading !== null}
+                      disabled={actionLoading !== null}
                     >
-                      <Text style={styles.btnText}>Custom Delivered</Text>
+                      <Text style={styles.btnText}>{b.deliveredToday ? 'Add another milk' : 'Custom Delivered'}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -269,6 +293,21 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
             {customModal && (
               <>
                 <Text style={styles.modalName}>{customModal.name}</Text>
+                <Text style={styles.modalLabel}>Milk type</Text>
+                <View style={styles.milkSourceRow}>
+                  {MILK_SOURCE_TYPES.map((src) => {
+                    const isActive = customModal.milkSource === src.value;
+                    return (
+                      <TouchableOpacity
+                        key={src.value}
+                        style={[styles.milkSourceBtn, isActive && styles.milkSourceBtnActive]}
+                        onPress={() => setCustomModal((m) => ({ ...m, milkSource: src.value }))}
+                      >
+                        <Text style={[styles.milkSourceBtnText, isActive && styles.milkSourceBtnTextActive]}>{src.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
                 <Input
                   placeholder="Quantity (L)"
                   keyboardType="decimal-pad"
@@ -330,6 +369,7 @@ const styles = StyleSheet.create({
   badge: { alignItems: 'flex-end' },
   badgeText: { fontSize: 13, fontWeight: '600', color: '#4CAF50' },
   badgeSub: { fontSize: 12, color: '#666', marginTop: 2 },
+  badgeTotal: { fontSize: 12, color: '#333', fontWeight: '600', marginTop: 4 },
   notDelivered: { fontSize: 13, color: '#d32f2f', fontWeight: '500' },
   detail: { fontSize: 13, color: '#666', marginBottom: 12 },
   buttons: { flexDirection: 'row' },
@@ -342,6 +382,12 @@ const styles = StyleSheet.create({
   modalBox: { backgroundColor: '#fff', borderRadius: 12, padding: 20 },
   modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
   modalName: { fontSize: 15, color: '#666', marginBottom: 12 },
+  modalLabel: { fontSize: 12, color: '#999', marginBottom: 6 },
+  milkSourceRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
+  milkSourceBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, backgroundColor: '#f0f0f0', marginRight: 8, marginBottom: 8 },
+  milkSourceBtnActive: { backgroundColor: '#2196F3' },
+  milkSourceBtnText: { fontSize: 14, color: '#333' },
+  milkSourceBtnTextActive: { color: '#fff', fontWeight: '600' },
   input: { marginBottom: 12, backgroundColor: '#f5f5f5' },
   modalButtons: { flexDirection: 'row', marginTop: 8 },
   cancelBtn: { backgroundColor: '#9e9e9e', marginRight: 12 },

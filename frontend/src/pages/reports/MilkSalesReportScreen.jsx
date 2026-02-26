@@ -15,6 +15,7 @@ import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import Input from '../../components/common/Input';
 import { formatDate } from '../../utils/dateUtils';
 import { formatCurrency } from '../../utils/currencyUtils';
+import { MILK_SOURCE_TYPES } from '../../constants';
 import { milkService } from '../../services/milk/milkService';
 import { buyerService } from '../../services/buyers/buyerService';
 import { reportService } from '../../services/reports/reportService';
@@ -27,6 +28,11 @@ import RNShare from 'react-native-share';
  * Comprehensive dashboard showing milk sales with buyer-wise breakdown
  */
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function getMilkSourceLabel(value) {
+  const v = (value || 'cow').toLowerCase();
+  return MILK_SOURCE_TYPES.find((t) => t.value === v)?.label || 'Cow';
+}
 
 export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
   const now = new Date();
@@ -174,6 +180,7 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
           totalAmount: 0,
           transactionCount: 0,
           transactions: [],
+          milkSources: [],
         });
       }
     });
@@ -196,9 +203,14 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
             totalAmount: 0,
             transactionCount: 0,
             transactions: [],
+            milkSources: [],
           };
         }
 
+        const src = (tx.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(String(tx.milkSource).toLowerCase()))
+          ? String(tx.milkSource).toLowerCase()
+          : 'cow';
+        if (!buyerSummary.milkSources.includes(src)) buyerSummary.milkSources.push(src);
         buyerSummary.totalQuantity += tx.quantity || 0;
         buyerSummary.totalAmount += tx.totalAmount || 0;
         buyerSummary.transactionCount += 1;
@@ -539,6 +551,14 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
                       <Text style={styles.buyerTotalQuantity}>{buyer.totalQuantity.toFixed(2)} L</Text>
                     </View>
                   </View>
+                  {buyer.milkSources && buyer.milkSources.length > 0 && (
+                    <View style={styles.buyerMilkSourcesRow}>
+                      <Text style={styles.buyerMilkSourcesLabel}>Source: </Text>
+                      <Text style={styles.buyerMilkSourcesValue}>
+                        {[...buyer.milkSources].sort().map((s) => getMilkSourceLabel(s)).join(', ')}
+                      </Text>
+                    </View>
+                  )}
 
                   <View style={styles.buyerCardBody}>
                     <View style={styles.buyerStatsRow}>
@@ -581,7 +601,7 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
                               <View style={styles.transactionRowLeft}>
                                 <Text style={styles.transactionDate}>{formatDate(new Date(tx.date))}</Text>
                                 <Text style={styles.transactionDetails}>
-                                  {tx.quantity.toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
+                                  {tx.quantity.toFixed(2)} L {getMilkSourceLabel(tx.milkSource)} @ {formatCurrency(tx.pricePerLiter)}/L
                                 </Text>
                               </View>
                               <Text style={styles.transactionAmount}>{formatCurrency(tx.totalAmount)}</Text>
@@ -936,6 +956,23 @@ const styles = StyleSheet.create({
   buyerTotalQuantity: {
     fontSize: 14,
     color: '#666',
+  },
+  buyerMilkSourcesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+  },
+  buyerMilkSourcesLabel: {
+    fontSize: 12,
+    color: '#999',
+  },
+  buyerMilkSourcesValue: {
+    fontSize: 12,
+    color: '#333',
+    fontWeight: '500',
   },
   buyerCardBody: {
     marginTop: 10,

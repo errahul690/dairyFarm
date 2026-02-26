@@ -117,12 +117,15 @@ export const milkService = {
    * @param {string} buyerMobile - 10-digit buyer mobile
    * @param {number} [quantity] - optional; if omitted uses buyer's set daily quantity
    * @param {number} [pricePerLiter] - optional; if omitted uses buyer's set rate
+   * @param {string} [milkSource] - optional; cow/buffalo/sheep/goat; if omitted uses buyer's default
    */
-  quickSale: async (buyerMobile, quantity = null, pricePerLiter = null) => {
+  quickSale: async (buyerMobile, quantity = null, pricePerLiter = null, milkSource = null) => {
     const payload = { buyerMobile: String(buyerMobile).trim() };
     if (quantity != null && quantity > 0) payload.quantity = quantity;
     if (pricePerLiter != null && pricePerLiter >= 0) payload.pricePerLiter = pricePerLiter;
+    if (milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(milkSource)) payload.milkSource = milkSource;
     const response = await apiClient.post('/milk/quick-sale', payload);
+    if (response && Array.isArray(response.transactions)) return response;
     return {
       ...response,
       date: new Date(response.date),

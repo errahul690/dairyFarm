@@ -39,6 +39,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
     milkFixedPrice: '',
     dailyMilkQuantity: '',
     milkSource: 'cow',
+    deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
     deliveryScheduleType: 'daily',
     deliveryDays: [],
     deliveryCycleDays: '2',
@@ -204,6 +205,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
           fixedPrice: buyer.rate,
           dailyQuantity: buyer.quantity,
           milkSource: buyer.milkSource || 'cow',
+          deliveryItems: Array.isArray(buyer.deliveryItems) ? buyer.deliveryItems : undefined,
           active: buyer.active !== false,
           isAlsoSeller: buyer.isAlsoSeller === true,
           deliveryDays: buyer.deliveryDays,
@@ -287,13 +289,21 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
     const startDate = buyer.deliveryCycleStartDate
       ? new Date(buyer.deliveryCycleStartDate).toISOString().slice(0, 10)
       : new Date().toISOString().slice(0, 10);
+    const items = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0
+      ? buyer.deliveryItems.map((it) => ({
+          milkSource: (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow',
+          quantity: it.quantity != null ? String(it.quantity) : '',
+          rate: it.rate != null ? String(it.rate) : '',
+        }))
+      : [{ milkSource: (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(buyer.milkSource)) ? buyer.milkSource : 'cow', quantity: buyer.dailyQuantity != null ? String(buyer.dailyQuantity) : '', rate: buyer.fixedPrice != null ? String(buyer.fixedPrice) : '' }];
     setFormData({
       name: buyer.name || '',
-      mobile: buyer.phone || '',
+      mobile: buyer.phone || buyer.mobile || '',
       email: buyer.email || '',
       milkFixedPrice: buyer.fixedPrice != null ? String(buyer.fixedPrice) : '',
       dailyMilkQuantity: buyer.dailyQuantity != null ? String(buyer.dailyQuantity) : '',
       milkSource: (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(buyer.milkSource)) ? buyer.milkSource : 'cow',
+      deliveryItems: items,
       deliveryScheduleType: scheduleType,
       deliveryDays: Array.isArray(buyer.deliveryDays) ? [...buyer.deliveryDays] : [],
       deliveryCycleDays: buyer.deliveryCycleDays ? String(buyer.deliveryCycleDays) : '2',
@@ -323,21 +333,37 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
       Alert.alert('Error', 'Enter start date for delivery cycle');
       return;
     }
+    const builtItems = (formData.deliveryItems || [])
+      .map((it) => {
+        const q = parseFloat(it.quantity);
+        const r = parseFloat(it.rate);
+        if (!(q > 0 && r >= 0)) return null;
+        const src = (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow';
+        return { milkSource: src, quantity: q, rate: r };
+      })
+      .filter(Boolean);
+    if (builtItems.length === 0) {
+      Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
+      return;
+    }
     try {
       setLoading(true);
-      const fixedPrice = formData.milkFixedPrice?.trim() ? parseFloat(formData.milkFixedPrice) : undefined;
-      const dailyQuantity = formData.dailyMilkQuantity?.trim() ? parseFloat(formData.dailyMilkQuantity) : undefined;
+      const first = builtItems[0];
+      const fixedPrice = first.rate;
+      const dailyQuantity = builtItems.reduce((s, it) => s + it.quantity, 0);
       await userService.updateUser(editingBuyer.userId, {
         name: formData.name.trim(),
         email: formData.email?.trim() || '',
         mobile: formData.mobile.trim(),
         milkFixedPrice: fixedPrice,
-        dailyMilkQuantity: dailyQuantity,
+        dailyMilkQuantity,
       });
-      const deliveryPayload = {};
-      if (formData.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(formData.milkSource)) {
-        deliveryPayload.milkSource = formData.milkSource;
-      }
+      const deliveryPayload = {
+        deliveryItems: builtItems,
+        quantity: first.quantity,
+        rate: first.rate,
+        milkSource: first.milkSource,
+      };
       if (formData.deliveryScheduleType === 'daily') {
         deliveryPayload.deliveryDays = [];
         deliveryPayload.deliveryCycleDays = null;
@@ -395,34 +421,27 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
       return;
     }
 
+    const builtItems = (formData.deliveryItems || [])
+      .map((it) => {
+        const q = parseFloat(it.quantity);
+        const r = parseFloat(it.rate);
+        if (!(q > 0 && r >= 0)) return null;
+        const src = (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow';
+        return { milkSource: src, quantity: q, rate: r };
+      })
+      .filter(Boolean);
+    if (builtItems.length === 0) {
+      Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
+      return;
+    }
+
     try {
       setLoading(true);
-      // Parse fixed price and daily quantity, only if not empty
-      const fixedPrice = formData.milkFixedPrice && formData.milkFixedPrice.trim() 
-        ? parseFloat(formData.milkFixedPrice.trim()) 
-        : undefined;
-      const dailyQuantity = formData.dailyMilkQuantity && formData.dailyMilkQuantity.trim()
-        ? parseFloat(formData.dailyMilkQuantity.trim())
-        : undefined;
-      
-      // Validate parsed values
-      if (formData.milkFixedPrice && formData.milkFixedPrice.trim()) {
-        if (isNaN(fixedPrice) || fixedPrice <= 0) {
-          Alert.alert('Error', 'Please enter a valid fixed price (greater than 0)');
-          setLoading(false);
-          return;
-        }
-      }
-      if (formData.dailyMilkQuantity && formData.dailyMilkQuantity.trim()) {
-        if (isNaN(dailyQuantity) || dailyQuantity <= 0) {
-          Alert.alert('Error', 'Please enter a valid daily milk quantity (greater than 0)');
-          setLoading(false);
-          return;
-        }
-      }
-      
-      // Create buyer with fixed password 123456#
-      const milkSource = (formData.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(formData.milkSource)) ? formData.milkSource : 'cow';
+      const first = builtItems[0];
+      const fixedPrice = first.rate;
+      const dailyQuantity = builtItems.reduce((s, it) => s + it.quantity, 0);
+      const milkSource = first.milkSource;
+
       await authService.signup(
         formData.name.trim(),
         formData.email.trim() || '',
@@ -438,7 +457,6 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
 
       await loadData(true);
 
-      // Apply delivery schedule: find new buyer by mobile and update
       const deliveryPayload = {};
       if (formData.deliveryScheduleType === 'daily') {
         deliveryPayload.deliveryDays = [];
@@ -456,18 +474,21 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
           ? new Date(formData.deliveryCycleStartDate).toISOString()
           : null;
       }
+      deliveryPayload.deliveryItems = builtItems;
+      deliveryPayload.quantity = first.quantity;
+      deliveryPayload.rate = first.rate;
+      deliveryPayload.milkSource = milkSource;
+
       const mobileTrim = formData.mobile.trim();
       const allBuyers = await buyerService.getBuyers(false);
       const newBuyer = allBuyers.find((b) => (b.mobile || '').toString().trim() === mobileTrim);
       if (newBuyer && newBuyer._id) {
-        const updatePayload = { ...deliveryPayload };
-        if (milkSource) updatePayload.milkSource = milkSource;
-        await buyerService.updateBuyer(newBuyer._id, updatePayload);
+        await buyerService.updateBuyer(newBuyer._id, deliveryPayload);
       }
 
-      // Reset form
       setFormData({
         name: '', mobile: '', email: '', milkFixedPrice: '', dailyMilkQuantity: '', milkSource: 'cow',
+        deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
         deliveryScheduleType: 'daily', deliveryDays: [], deliveryCycleDays: '2',
         deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
       });
@@ -664,22 +685,32 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                             : 'Settled'}
                       </Text>
                     </View>
-                    {(buyer.fixedPrice || buyer.dailyQuantity || buyer.milkSource) && (
+                    {(buyer.fixedPrice || buyer.dailyQuantity || buyer.milkSource || (buyer.deliveryItems && buyer.deliveryItems.length > 0)) && (
                       <View style={styles.buyerDetails}>
-                        {buyer.milkSource && (
-                          <Text style={styles.buyerDetailText}>
-                            Milk: {MILK_SOURCE_TYPES.find((s) => s.value === buyer.milkSource)?.label || buyer.milkSource}
-                          </Text>
-                        )}
-                        {buyer.fixedPrice && (
-                          <Text style={styles.buyerDetailText}>
-                            Fixed Price: {formatCurrency(buyer.fixedPrice)}/L
-                          </Text>
-                        )}
-                        {buyer.dailyQuantity && (
-                          <Text style={styles.buyerDetailText}>
-                            Daily Quantity: {buyer.dailyQuantity.toFixed(2)} L
-                          </Text>
+                        {buyer.deliveryItems && buyer.deliveryItems.length > 0 ? (
+                          buyer.deliveryItems.map((it, i) => (
+                            <Text key={i} style={styles.buyerDetailText}>
+                              {MILK_SOURCE_TYPES.find((s) => s.value === it.milkSource)?.label || it.milkSource}: {(Number(it.quantity) || 0).toFixed(2)} L @ {formatCurrency(Number(it.rate) || 0)}/L
+                            </Text>
+                          ))
+                        ) : (
+                          <>
+                            {buyer.milkSource && (
+                              <Text style={styles.buyerDetailText}>
+                                Milk: {MILK_SOURCE_TYPES.find((s) => s.value === buyer.milkSource)?.label || buyer.milkSource}
+                              </Text>
+                            )}
+                            {buyer.fixedPrice && (
+                              <Text style={styles.buyerDetailText}>
+                                Fixed Price: {formatCurrency(buyer.fixedPrice)}/L
+                              </Text>
+                            )}
+                            {buyer.dailyQuantity && (
+                              <Text style={styles.buyerDetailText}>
+                                Daily Quantity: {buyer.dailyQuantity.toFixed(2)} L
+                              </Text>
+                            )}
+                          </>
                         )}
                       </View>
                     )}
@@ -825,41 +856,77 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                 autoCapitalize="none"
                 style={styles.input}
               />
-              <Text style={styles.label}>Fixed Milk Price (₹/L) (Optional)</Text>
-              <Input
-                placeholder="Enter fixed price per liter"
-                value={formData.milkFixedPrice}
-                onChangeText={(text) => setFormData({ ...formData, milkFixedPrice: text })}
-                keyboardType="decimal-pad"
-                style={styles.input}
-              />
-              <Text style={styles.label}>Daily Milk Quantity (Liters) (Optional)</Text>
-              <Input
-                placeholder="Enter expected daily milk quantity"
-                value={formData.dailyMilkQuantity}
-                onChangeText={(text) => setFormData({ ...formData, dailyMilkQuantity: text })}
-                keyboardType="decimal-pad"
-                style={styles.input}
-              />
-
-              <Text style={styles.label}>Milk source *</Text>
-              <View style={styles.milkSourceRow}>
-                {MILK_SOURCE_TYPES.map((src) => {
-                  const isActive = formData.milkSource === src.value;
-                  return (
+              <Text style={styles.label}>Milk delivery (per day) *</Text>
+              <Text style={styles.hint}>Add one or more milk types with quantity and rate. Quick Sale &quot;Delivered&quot; will create all in one go.</Text>
+              {(formData.deliveryItems || []).map((item, idx) => (
+                <View key={idx} style={styles.deliveryItemCard}>
+                  <Text style={styles.deliveryItemCardTitle}>Milk type</Text>
+                  <View style={styles.deliveryItemSourceRow}>
+                    {MILK_SOURCE_TYPES.map((src) => {
+                      const isActive = item.milkSource === src.value;
+                      return (
+                        <TouchableOpacity
+                          key={src.value}
+                          style={[styles.milkSourceChip, isActive && styles.milkSourceChipActive]}
+                          onPress={() => {
+                            const next = [...(formData.deliveryItems || [])];
+                            next[idx] = { ...next[idx], milkSource: src.value };
+                            setFormData({ ...formData, deliveryItems: next });
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.milkSourceChipText, isActive && styles.milkSourceChipTextActive]}>{src.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <View style={styles.deliveryItemInputRow}>
+                    <View style={styles.deliveryItemField}>
+                      <Text style={styles.deliveryItemFieldLabel}>Qty (L)</Text>
+                      <Input
+                        placeholder="0"
+                        value={item.quantity}
+                        onChangeText={(text) => {
+                          const next = [...(formData.deliveryItems || [])];
+                          next[idx] = { ...next[idx], quantity: text };
+                          setFormData({ ...formData, deliveryItems: next });
+                        }}
+                        keyboardType="decimal-pad"
+                        style={[styles.input, styles.deliveryItemInput]}
+                      />
+                    </View>
+                    <View style={styles.deliveryItemField}>
+                      <Text style={styles.deliveryItemFieldLabel}>Rate (₹/L)</Text>
+                      <Input
+                        placeholder="0"
+                        value={item.rate}
+                        onChangeText={(text) => {
+                          const next = [...(formData.deliveryItems || [])];
+                          next[idx] = { ...next[idx], rate: text };
+                          setFormData({ ...formData, deliveryItems: next });
+                        }}
+                        keyboardType="decimal-pad"
+                        style={[styles.input, styles.deliveryItemInput]}
+                      />
+                    </View>
                     <TouchableOpacity
-                      key={src.value}
-                      style={[styles.milkSourceButton, isActive && styles.milkSourceButtonActive]}
-                      onPress={() => setFormData({ ...formData, milkSource: src.value })}
-                      activeOpacity={0.7}
+                      onPress={() => {
+                        const next = (formData.deliveryItems || []).filter((_, i) => i !== idx);
+                        setFormData({ ...formData, deliveryItems: next.length ? next : [{ milkSource: 'cow', quantity: '', rate: '' }] });
+                      }}
+                      style={styles.removeItemBtn}
                     >
-                      <Text style={[styles.milkSourceButtonText, isActive && styles.milkSourceButtonTextActive]}>
-                        {src.label}
-                      </Text>
+                      <Text style={styles.removeItemBtnText}>Remove</Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
+                  </View>
+                </View>
+              ))}
+              <TouchableOpacity
+                style={styles.addDeliveryItemBtn}
+                onPress={() => setFormData({ ...formData, deliveryItems: [...(formData.deliveryItems || []), { milkSource: 'cow', quantity: '', rate: '' }] })}
+              >
+                <Text style={styles.addDeliveryItemBtnText}>+ Add another milk type</Text>
+              </TouchableOpacity>
 
               <Text style={styles.label}>Delivery schedule (Quick Sale)</Text>
               <Text style={styles.hint}>Choose when this buyer gets milk. They will appear in Quick Sale only on these days.</Text>
@@ -950,6 +1017,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                   setShowAddForm(false);
                   setFormData({
                     name: '', mobile: '', email: '', milkFixedPrice: '', dailyMilkQuantity: '', milkSource: 'cow',
+                    deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
                     deliveryScheduleType: 'daily', deliveryDays: [], deliveryCycleDays: '2',
                     deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
                   });
@@ -988,42 +1056,77 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                 style={styles.input}
               />
 
-              <Text style={styles.label}>Fixed Milk Price (₹/L) (Optional)</Text>
-              <Input
-                placeholder="Enter fixed price per liter"
-                value={formData.milkFixedPrice}
-                onChangeText={(text) => setFormData({ ...formData, milkFixedPrice: text })}
-                keyboardType="decimal-pad"
-                style={styles.input}
-              />
-
-              <Text style={styles.label}>Daily Milk Quantity (Liters) (Optional)</Text>
-              <Input
-                placeholder="Enter expected daily milk quantity"
-                value={formData.dailyMilkQuantity}
-                onChangeText={(text) => setFormData({ ...formData, dailyMilkQuantity: text })}
-                keyboardType="decimal-pad"
-                style={styles.input}
-              />
-
-              <Text style={styles.label}>Milk source *</Text>
-              <View style={styles.milkSourceRow}>
-                {MILK_SOURCE_TYPES.map((src) => {
-                  const isActive = formData.milkSource === src.value;
-                  return (
+              <Text style={styles.label}>Milk delivery (per day) *</Text>
+              <Text style={styles.hint}>Add one or more milk types with quantity and rate. Quick Sale &quot;Delivered&quot; will create all in one go.</Text>
+              {(formData.deliveryItems || []).map((item, idx) => (
+                <View key={idx} style={styles.deliveryItemCard}>
+                  <Text style={styles.deliveryItemCardTitle}>Milk type</Text>
+                  <View style={styles.deliveryItemSourceRow}>
+                    {MILK_SOURCE_TYPES.map((src) => {
+                      const isActive = item.milkSource === src.value;
+                      return (
+                        <TouchableOpacity
+                          key={src.value}
+                          style={[styles.milkSourceChip, isActive && styles.milkSourceChipActive]}
+                          onPress={() => {
+                            const next = [...(formData.deliveryItems || [])];
+                            next[idx] = { ...next[idx], milkSource: src.value };
+                            setFormData({ ...formData, deliveryItems: next });
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.milkSourceChipText, isActive && styles.milkSourceChipTextActive]}>{src.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  <View style={styles.deliveryItemInputRow}>
+                    <View style={styles.deliveryItemField}>
+                      <Text style={styles.deliveryItemFieldLabel}>Qty (L)</Text>
+                      <Input
+                        placeholder="0"
+                        value={item.quantity}
+                        onChangeText={(text) => {
+                          const next = [...(formData.deliveryItems || [])];
+                          next[idx] = { ...next[idx], quantity: text };
+                          setFormData({ ...formData, deliveryItems: next });
+                        }}
+                        keyboardType="decimal-pad"
+                        style={[styles.input, styles.deliveryItemInput]}
+                      />
+                    </View>
+                    <View style={styles.deliveryItemField}>
+                      <Text style={styles.deliveryItemFieldLabel}>Rate (₹/L)</Text>
+                      <Input
+                        placeholder="0"
+                        value={item.rate}
+                        onChangeText={(text) => {
+                          const next = [...(formData.deliveryItems || [])];
+                          next[idx] = { ...next[idx], rate: text };
+                          setFormData({ ...formData, deliveryItems: next });
+                        }}
+                        keyboardType="decimal-pad"
+                        style={[styles.input, styles.deliveryItemInput]}
+                      />
+                    </View>
                     <TouchableOpacity
-                      key={src.value}
-                      style={[styles.milkSourceButton, isActive && styles.milkSourceButtonActive]}
-                      onPress={() => setFormData({ ...formData, milkSource: src.value })}
-                      activeOpacity={0.7}
+                      onPress={() => {
+                        const next = (formData.deliveryItems || []).filter((_, i) => i !== idx);
+                        setFormData({ ...formData, deliveryItems: next.length ? next : [{ milkSource: 'cow', quantity: '', rate: '' }] });
+                      }}
+                      style={styles.removeItemBtn}
                     >
-                      <Text style={[styles.milkSourceButtonText, isActive && styles.milkSourceButtonTextActive]}>
-                        {src.label}
-                      </Text>
+                      <Text style={styles.removeItemBtnText}>Remove</Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
+                  </View>
+                </View>
+              ))}
+              <TouchableOpacity
+                style={styles.addDeliveryItemBtn}
+                onPress={() => setFormData({ ...formData, deliveryItems: [...(formData.deliveryItems || []), { milkSource: 'cow', quantity: '', rate: '' }] })}
+              >
+                <Text style={styles.addDeliveryItemBtnText}>+ Add another milk type</Text>
+              </TouchableOpacity>
 
               <Text style={styles.label}>Delivery schedule (Quick Sale)</Text>
               <Text style={styles.hint}>Choose when this buyer gets milk. They will appear in Quick Sale only on these days.</Text>
@@ -1675,6 +1778,110 @@ const styles = StyleSheet.create({
   },
   milkSourceButtonTextActive: {
     color: '#FFFFFF',
+  },
+  deliveryItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 8,
+  },
+  deliveryItemCard: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+  },
+  deliveryItemCardTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#495057',
+    marginBottom: 8,
+  },
+  deliveryItemSourceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  milkSourceChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+  },
+  milkSourceChipActive: {
+    backgroundColor: '#2196F3',
+    borderColor: '#2196F3',
+  },
+  milkSourceChipText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#495057',
+  },
+  milkSourceChipTextActive: {
+    color: '#fff',
+  },
+  deliveryItemInputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    flexWrap: 'wrap',
+  },
+  deliveryItemField: {
+    flex: 1,
+    minWidth: 80,
+  },
+  deliveryItemFieldLabel: {
+    fontSize: 12,
+    color: '#6c757d',
+    marginBottom: 4,
+    fontWeight: '500',
+  },
+  deliveryItemSource: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    flex: 1,
+  },
+  deliveryItemInputs: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  deliveryItemInput: {
+    width: 70,
+    marginBottom: 0,
+  },
+  removeItemBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#ffebee',
+    borderRadius: 8,
+    alignSelf: 'flex-end',
+  },
+  removeItemBtnText: {
+    color: '#c62828',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  addDeliveryItemBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: '#E3F2FD',
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#2196F3',
+    borderStyle: 'dashed',
+  },
+  addDeliveryItemBtnText: {
+    color: '#2196F3',
+    fontSize: 14,
+    fontWeight: '600',
   },
   daysRow: {
     flexDirection: 'row',

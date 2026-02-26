@@ -739,7 +739,8 @@ async function downloadConsumerConsumptionExcel(req, res) {
           buyerName: { $first: "$buyer" },
           totalQuantity: { $sum: "$quantity" },
           totalAmount: { $sum: "$totalAmount" },
-          transactionCount: { $sum: 1 }
+          transactionCount: { $sum: 1 },
+          milkSources: { $addToSet: { $ifNull: ["$milkSource", "cow"] } }
         }
       },
       { $sort: { totalAmount: -1 } }
@@ -751,36 +752,41 @@ async function downloadConsumerConsumptionExcel(req, res) {
       role: UserRoles.CONSUMER
     }).select("name mobile");
     const nameByMobile = new Map(users.map((u) => [u.mobile, u.name]));
+    const milkSourceLabels = { cow: "Cow", buffalo: "Buffalo", sheep: "Sheep", goat: "Goat" };
     const summary = agg.map((e) => {
       const qty = Number(e.totalQuantity ?? 0);
       const amt = Number(e.totalAmount ?? 0);
+      const sources = (e.milkSources || []).filter(Boolean).map((s) => milkSourceLabels[s] || s);
+      const sourceStr = [...new Set(sources)].length ? [...new Set(sources)].join(", ") : "Cow";
       return {
         name: nameByMobile.get(e._id) || e.buyerName || "Unknown",
         mobile: e._id,
         totalQuantity: qty,
         totalAmount: amt,
         averageRate: qty ? amt / qty : 0,
-        transactionCount: Number(e.transactionCount ?? 0)
+        transactionCount: Number(e.transactionCount ?? 0),
+        milkSource: sourceStr
       };
     });
 
     const totalQty = summary.reduce((s, r) => s + r.totalQuantity, 0);
     const totalAmt = summary.reduce((s, r) => s + r.totalAmount, 0);
-    const header = ["S.No.", "Consumer Name", "Mobile", "Total Qty (L)", "Price (₹/L)", "Days (Visits)", "Total Price (₹)"];
+    const header = ["S.No.", "Consumer Name", "Mobile", "Source", "Total Qty (L)", "Price (₹/L)", "Days (Visits)", "Total Price (₹)"];
     const rows = summary.map((r, i) => [
       i + 1,
       r.name,
       r.mobile || "",
+      r.milkSource || "Cow",
       Number(r.totalQuantity.toFixed(2)),
       Number(r.averageRate.toFixed(2)),
       r.transactionCount,
       Number(r.totalAmount.toFixed(2))
     ]);
-    const totalRow = ["", "TOTAL", "", Number(totalQty.toFixed(2)), "", "", Number(totalAmt.toFixed(2))];
-    const monthTotalRow = ["Month Total", totalQty.toFixed(2) + " L milk sold", "", "", "", "Total Amount", "₹" + totalAmt.toFixed(2)];
+    const totalRow = ["", "TOTAL", "", "", Number(totalQty.toFixed(2)), "", "", Number(totalAmt.toFixed(2))];
+    const monthTotalRow = ["Month Total", totalQty.toFixed(2) + " L milk sold", "", "", "", "", "Total Amount", "₹" + totalAmt.toFixed(2)];
     const wsData = [monthTotalRow, [], header, ...rows, totalRow];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    const colWidths = [{ wch: 6 }, { wch: 18 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
+    const colWidths = [{ wch: 6 }, { wch: 18 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
     ws["!cols"] = colWidths;
     const wb = XLSX.utils.book_new();
     const sheetName = `Consumer_${periodRange.year}_${String(periodRange.month).padStart(2, "0")}`;
@@ -791,36 +797,44 @@ async function downloadConsumerConsumptionExcel(req, res) {
       { $match: { normalizedBuyerPhone: { $ne: "" } } },
       ...(normalizedBuyerMobile ? [{ $match: { normalizedBuyerPhone: normalizedBuyerMobile } }] : []),
       { $sort: { date: 1 } },
-      { $project: { date: 1, buyer: 1, buyerPhone: 1, quantity: 1, pricePerLiter: 1, totalAmount: 1, normalizedBuyerPhone: 1 } }
+      { $project: { date: 1, buyer: 1, buyerPhone: 1, quantity: 1, pricePerLiter: 1, totalAmount: 1, normalizedBuyerPhone: 1, milkSource: 1 } }
     ];
     const detailTx = await MilkTransaction.aggregate(detailPipeline);
     if (normalizedBuyerMobile && detailTx.length > 0) {
-      const detailHeader = ["Date", "Quantity (L)", "Price/L (₹)", "Total (₹)"];
-      const detailRows = detailTx.map((tx) => [
-        tx.date ? new Date(tx.date).toISOString().slice(0, 10) : "",
-        Number(tx.quantity ?? 0).toFixed(2),
-        Number(tx.pricePerLiter ?? 0).toFixed(2),
-        Number(tx.totalAmount ?? 0).toFixed(2)
-      ]);
-      const wsDetail = XLSX.utils.aoa_to_sheet([detailHeader, ...detailRows]);
-      wsDetail["!cols"] = [{ wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
-      XLSX.utils.book_append_sheet(wb, wsDetail, "Day_wise_Detail");
-    } else if (!normalizedBuyerMobile) {
-      const detailHeader = ["Date", "Consumer Name", "Mobile", "Qty (L)", "Price/L (₹)", "Total (₹)"];
+      const detailHeader = ["Date", "Quantity (L)", "Source", "Price/L (₹)", "Total (₹)"];
       const detailRows = detailTx.map((tx) => {
-        const ph = (tx.normalizedBuyerPhone || tx.buyerPhone || "").trim();
-        const nm = nameByMobile.get(ph) || tx.buyer || "Unknown";
+        const src = (tx.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(tx.milkSource)) ? tx.milkSource : "cow";
+        const srcLabel = milkSourceLabels[src] || src;
         return [
           tx.date ? new Date(tx.date).toISOString().slice(0, 10) : "",
-          nm,
-          ph,
           Number(tx.quantity ?? 0).toFixed(2),
+          srcLabel,
           Number(tx.pricePerLiter ?? 0).toFixed(2),
           Number(tx.totalAmount ?? 0).toFixed(2)
         ];
       });
       const wsDetail = XLSX.utils.aoa_to_sheet([detailHeader, ...detailRows]);
-      wsDetail["!cols"] = [{ wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 12 }, { wch: 12 }];
+      wsDetail["!cols"] = [{ wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(wb, wsDetail, "Day_wise_Detail");
+    } else if (!normalizedBuyerMobile) {
+      const detailHeader = ["Date", "Consumer Name", "Mobile", "Qty (L)", "Source", "Price/L (₹)", "Total (₹)"];
+      const detailRows = detailTx.map((tx) => {
+        const ph = (tx.normalizedBuyerPhone || tx.buyerPhone || "").trim();
+        const nm = nameByMobile.get(ph) || tx.buyer || "Unknown";
+        const src = (tx.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(tx.milkSource)) ? tx.milkSource : "cow";
+        const srcLabel = milkSourceLabels[src] || src;
+        return [
+          tx.date ? new Date(tx.date).toISOString().slice(0, 10) : "",
+          nm,
+          ph,
+          Number(tx.quantity ?? 0).toFixed(2),
+          srcLabel,
+          Number(tx.pricePerLiter ?? 0).toFixed(2),
+          Number(tx.totalAmount ?? 0).toFixed(2)
+        ];
+      });
+      const wsDetail = XLSX.utils.aoa_to_sheet([detailHeader, ...detailRows]);
+      wsDetail["!cols"] = [{ wch: 12 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }];
       XLSX.utils.book_append_sheet(wb, wsDetail, "Day_wise_Detail");
     }
     const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });

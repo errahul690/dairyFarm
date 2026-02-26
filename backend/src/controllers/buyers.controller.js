@@ -32,6 +32,7 @@ const listBuyers = async (req, res) => {
           active: buyer.active !== false,
           isAlsoSeller: !!sellerRecord,
           milkSource: buyer.milkSource || 'cow',
+          deliveryItems: buyer.deliveryItems,
           deliveryDays: buyer.deliveryDays,
           deliveryCycleDays: buyer.deliveryCycleDays,
           deliveryCycleStartDate: buyer.deliveryCycleStartDate,
@@ -69,6 +70,7 @@ const getMyBuyerProfile = async (req, res) => {
       rate: buyer.rate,
       active: buyer.active !== false,
       milkSource: buyer.milkSource || 'cow',
+      deliveryItems: buyer.deliveryItems,
       deliveryDays: buyer.deliveryDays,
       deliveryCycleDays: buyer.deliveryCycleDays,
       deliveryCycleStartDate: buyer.deliveryCycleStartDate,
@@ -87,10 +89,24 @@ const updateBuyer = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body || {};
-    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate"];
+    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryItems", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate"];
     const filtered = {};
     for (const key of allowed) {
       if (updates[key] !== undefined) filtered[key] = updates[key];
+    }
+    if (Array.isArray(filtered.deliveryItems)) {
+      filtered.deliveryItems = filtered.deliveryItems
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const src = (item.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(String(item.milkSource).toLowerCase()))
+            ? String(item.milkSource).toLowerCase()
+            : "cow";
+          const q = Number(item.quantity);
+          const r = Number(item.rate);
+          if (!(q > 0 && r >= 0)) return null;
+          return { milkSource: src, quantity: q, rate: r };
+        })
+        .filter(Boolean);
     }
     if (filtered.deliveryCycleStartDate != null && typeof filtered.deliveryCycleStartDate === "string") {
       filtered.deliveryCycleStartDate = new Date(filtered.deliveryCycleStartDate);
@@ -112,6 +128,7 @@ const updateBuyer = async (req, res) => {
       rate: updated.rate,
       active: updated.active !== false,
       milkSource: updated.milkSource || 'cow',
+      deliveryItems: updated.deliveryItems,
       deliveryDays: updated.deliveryDays,
       deliveryCycleDays: updated.deliveryCycleDays,
       deliveryCycleStartDate: updated.deliveryCycleStartDate,
