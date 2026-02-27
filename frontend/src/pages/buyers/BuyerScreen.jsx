@@ -56,6 +56,29 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
   const [buyerFilterTab, setBuyerFilterTab] = useState('active'); // 'active' | 'inactive'
   const [addAsSellerLoading, setAddAsSellerLoading] = useState(null);
 
+  // Date range for period pending (e.g. 10 to 9 billing)
+  const getDefaultDateRange = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const day = d.getDate();
+    let from, to;
+    if (day < 10) {
+      from = new Date(y, m - 1, 10);
+      to = new Date(y, m, 9);
+    } else {
+      from = new Date(y, m, 10);
+      to = new Date(y, m + 1, 9);
+      if (to > d) to = new Date(d);
+    }
+    return {
+      from: from.getFullYear() + '-' + String(from.getMonth() + 1).padStart(2, '0') + '-' + String(from.getDate()).padStart(2, '0'),
+      to: to.getFullYear() + '-' + String(to.getMonth() + 1).padStart(2, '0') + '-' + String(to.getDate()).padStart(2, '0'),
+    };
+  };
+  const [dateFrom, setDateFrom] = useState(() => getDefaultDateRange().from);
+  const [dateTo, setDateTo] = useState(() => getDefaultDateRange().to);
+
   const canEditUsers = currentUser?.role === 0 || currentUser?.role === 1;
 
   const getTodayDateStr = () => {
@@ -255,6 +278,28 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
     [buyers, buyerFilterTab]
   );
 
+  // Period pending: for date range [dateFrom, dateTo], milk sales - payments received (from_buyer)
+  const periodPendingTotal = useMemo(() => {
+    const from = new Date(dateFrom);
+    const to = new Date(dateTo);
+    from.setHours(0, 0, 0, 0);
+    to.setHours(23, 59, 59, 999);
+    if (isNaN(from.getTime()) || isNaN(to.getTime()) || from > to) return 0;
+    let totalMilk = 0;
+    let totalPaid = 0;
+    (transactions || []).forEach((tx) => {
+      if (tx.type !== 'sale' || !tx.buyerPhone) return;
+      const txDate = new Date(tx.date);
+      if (txDate >= from && txDate <= to) totalMilk += Number(tx.totalAmount) || 0;
+    });
+    (payments || []).forEach((p) => {
+      if (p.paymentDirection && p.paymentDirection !== 'from_buyer') return;
+      const pDate = p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate);
+      if (pDate >= from && pDate <= to) totalPaid += Number(p.amount) || 0;
+    });
+    return Math.max(0, totalMilk - totalPaid);
+  }, [transactions, payments, dateFrom, dateTo]);
+
   const getBuyerTransactions = (phone) => {
     return transactions
       .filter((tx) => tx.type === 'sale' && tx.buyerPhone?.trim() === phone.trim())
@@ -356,7 +401,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
         email: formData.email?.trim() || '',
         mobile: formData.mobile.trim(),
         milkFixedPrice: fixedPrice,
-        dailyMilkQuantity,
+        dailyMilkQuantity: dailyQuantity,
       });
       const deliveryPayload = {
         deliveryItems: builtItems,
@@ -513,6 +558,32 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
         isAuthenticated={true}
         onLogout={onLogout}
       />
+      <View style={styles.dateRangeStrip}>
+        <View style={styles.dateRangeRow}>
+          <View style={styles.dateField}>
+            <Text style={styles.dateLabel}>From</Text>
+            <Input
+              value={dateFrom}
+              onChangeText={setDateFrom}
+              placeholder="YYYY-MM-DD"
+              style={styles.dateInput}
+            />
+          </View>
+          <View style={styles.dateField}>
+            <Text style={styles.dateLabel}>To</Text>
+            <Input
+              value={dateTo}
+              onChangeText={setDateTo}
+              placeholder="YYYY-MM-DD"
+              style={styles.dateInput}
+            />
+          </View>
+        </View>
+        <View style={styles.periodTotalRow}>
+          <Text style={styles.periodTotalLabel}>Total payable (period)</Text>
+          <Text style={styles.periodTotalAmount}>{formatCurrency(periodPendingTotal)}</Text>
+        </View>
+      </View>
       <ScrollView style={styles.content}>
         <TouchableOpacity
           style={styles.addButton}
@@ -812,6 +883,14 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
           </>
         )}
       </ScrollView>
+
+      <TouchableOpacity
+        style={styles.payFab}
+        onPress={() => onNavigate('Payments')}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.payFabText}>Pay</Text>
+      </TouchableOpacity>
 
       {/* Edit Buyer Modal */}
       <Modal
@@ -1336,9 +1415,74 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
+  dateRangeStrip: {
+    backgroundColor: '#2E7D32',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  dateRangeRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 10,
+  },
+  dateField: {
+    flex: 1,
+  },
+  dateLabel: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.9)',
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  dateInput: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    marginBottom: 0,
+  },
+  periodTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.3)',
+  },
+  periodTotalLabel: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.95)',
+    fontWeight: '600',
+  },
+  periodTotalAmount: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  payFab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#2196F3',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  payFabText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
   content: {
     flex: 1,
     padding: 15,
+    paddingBottom: 100,
   },
   centerContainer: {
     alignItems: 'center',
@@ -1802,8 +1946,8 @@ const styles = StyleSheet.create({
   deliveryItemSourceRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
     marginBottom: 10,
+    marginHorizontal: -4,
   },
   milkSourceChip: {
     paddingVertical: 10,
@@ -1811,16 +1955,18 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#dee2e6',
+    borderColor: '#333',
+    marginHorizontal: 4,
+    marginBottom: 8,
   },
   milkSourceChipActive: {
     backgroundColor: '#2196F3',
     borderColor: '#2196F3',
   },
   milkSourceChipText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#495057',
+    color: '#212529',
   },
   milkSourceChipTextActive: {
     color: '#fff',
@@ -1828,12 +1974,14 @@ const styles = StyleSheet.create({
   deliveryItemInputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 10,
     flexWrap: 'wrap',
+    marginHorizontal: -5,
   },
   deliveryItemField: {
     flex: 1,
-    minWidth: 80,
+    minWidth: 90,
+    marginHorizontal: 5,
+    marginBottom: 4,
   },
   deliveryItemFieldLabel: {
     fontSize: 12,

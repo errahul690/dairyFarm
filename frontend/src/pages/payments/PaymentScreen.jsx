@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -51,6 +51,15 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
     notes: '',
     referenceNumber: '',
   });
+
+  // Date filter: 'all' | 'date' — filter payments list by date range
+  const [paymentDateFilter, setPaymentDateFilter] = useState('all');
+  const [filterDateFrom, setFilterDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().split('T')[0];
+  });
+  const [filterDateTo, setFilterDateTo] = useState(() => new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
     loadData();
@@ -471,7 +480,7 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
   };
 
   const getTotalPayments = () => {
-    return payments.reduce((sum, payment) => sum + payment.amount, 0);
+    return filteredPayments.reduce((sum, payment) => sum + payment.amount, 0);
   };
 
   const getLatestSettlementByPhone = (settlementsList) => {
@@ -634,9 +643,32 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
   // Only show/count payments that are actually to sellers (avoid showing buyer payments by mistake)
   const sellerPaymentsOnly = (paymentsToSellers || []).filter((p) => p.paymentDirection === 'to_seller');
 
+  const filterByDateRange = (list, dateFrom, dateTo) => {
+    if (!dateFrom || !dateTo) return list;
+    const from = new Date(dateFrom);
+    const to = new Date(dateTo);
+    from.setHours(0, 0, 0, 0);
+    to.setHours(23, 59, 59, 999);
+    if (isNaN(from.getTime()) || isNaN(to.getTime()) || from > to) return list;
+    return (list || []).filter((p) => {
+      const d = p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate);
+      return d >= from && d <= to;
+    });
+  };
+
+  const filteredPayments = useMemo(
+    () => (paymentDateFilter === 'date' ? filterByDateRange(payments, filterDateFrom, filterDateTo) : payments),
+    [paymentDateFilter, filterDateFrom, filterDateTo, payments]
+  );
+
+  const filteredPaymentsToSellers = useMemo(
+    () => (paymentDateFilter === 'date' ? filterByDateRange(sellerPaymentsOnly, filterDateFrom, filterDateTo) : sellerPaymentsOnly),
+    [paymentDateFilter, filterDateFrom, filterDateTo, sellerPaymentsOnly]
+  );
+
   const getPaymentsByCustomer = () => {
     const customerMap = new Map();
-    payments.forEach((payment) => {
+    filteredPayments.forEach((payment) => {
       const key = payment.customerMobile || payment.customerId;
       if (!customerMap.has(key)) {
         customerMap.set(key, {
@@ -659,7 +691,7 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
   const getPaymentsBySeller = () => {
     const sellerPhones = new Set((sellers || []).map((s) => (s.mobile || '').trim()).filter((p) => p && p !== 'N/A'));
     const sellerMap = new Map();
-    sellerPaymentsOnly.forEach((payment) => {
+    filteredPaymentsToSellers.forEach((payment) => {
       const phone = (payment.customerMobile || '').trim();
       if (!phone || !sellerPhones.has(phone)) return; // only role-3 sellers
       const key = payment.customerMobile || payment.customerId;
@@ -706,6 +738,44 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
           <Text style={[styles.tabText, activePaymentTab === 'seller' && styles.tabTextActive]}>To sellers</Text>
         </TouchableOpacity>
       </View>
+      <View style={styles.dateFilterBar}>
+        <View style={styles.dateFilterRow}>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, paymentDateFilter === 'all' && styles.dateFilterTabActive]}
+            onPress={() => setPaymentDateFilter('all')}
+          >
+            <Text style={[styles.dateFilterTabText, paymentDateFilter === 'all' && styles.dateFilterTabTextActive]}>All</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, paymentDateFilter === 'date' && styles.dateFilterTabActive]}
+            onPress={() => setPaymentDateFilter('date')}
+          >
+            <Text style={[styles.dateFilterTabText, paymentDateFilter === 'date' && styles.dateFilterTabTextActive]}>Date</Text>
+          </TouchableOpacity>
+        </View>
+        {paymentDateFilter === 'date' && (
+          <View style={styles.dateFilterInputs}>
+            <View style={styles.dateFilterField}>
+              <Text style={styles.dateFilterLabel}>From</Text>
+              <Input
+                value={filterDateFrom}
+                onChangeText={setFilterDateFrom}
+                placeholder="YYYY-MM-DD"
+                style={styles.dateFilterInput}
+              />
+            </View>
+            <View style={styles.dateFilterField}>
+              <Text style={styles.dateFilterLabel}>To</Text>
+              <Input
+                value={filterDateTo}
+                onChangeText={setFilterDateTo}
+                placeholder="YYYY-MM-DD"
+                style={styles.dateFilterInput}
+              />
+            </View>
+          </View>
+        )}
+      </View>
       <ScrollView style={styles.content}>
         <TouchableOpacity
           style={styles.addButton}
@@ -743,14 +813,14 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
               <View style={[styles.summaryCard, styles.summaryCardBuyer]}>
                 <Text style={styles.summaryTitle}>From buyers</Text>
                 <Text style={styles.summaryValue}>{formatCurrency(getTotalPayments())}</Text>
-                <Text style={styles.summarySubtext}>{payments.length} Payment{payments.length !== 1 ? 's' : ''}</Text>
+                <Text style={styles.summarySubtext}>{filteredPayments.length} Payment{filteredPayments.length !== 1 ? 's' : ''}</Text>
               </View>
             )}
             {activePaymentTab === 'seller' && (
               <View style={[styles.summaryCard, styles.summaryCardSeller]}>
                 <Text style={styles.summaryTitle}>To sellers</Text>
                 <Text style={styles.summaryValue}>{formatCurrency(sellerPaymentsOnly.reduce((s, p) => s + (p.amount || 0), 0))}</Text>
-                <Text style={styles.summarySubtext}>{sellerPaymentsOnly.length} Payment{sellerPaymentsOnly.length !== 1 ? 's' : ''}</Text>
+                <Text style={styles.summarySubtext}>{filteredPaymentsToSellers.length} Payment{filteredPaymentsToSellers.length !== 1 ? 's' : ''}</Text>
               </View>
             )}
 
@@ -900,7 +970,7 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
               </>
             )}
 
-            {((activePaymentTab === 'buyer' && payments.length === 0 && customerBalances.length === 0) || (activePaymentTab === 'seller' && sellerPaymentsOnly.length === 0 && sellerBalances.length === 0)) && (
+            {((activePaymentTab === 'buyer' && filteredPayments.length === 0 && customerBalances.length === 0) || (activePaymentTab === 'seller' && filteredPaymentsToSellers.length === 0 && sellerBalances.length === 0)) && (
               <View style={styles.centerContainer}>
                 <Text style={styles.emptyText}>No payments recorded yet</Text>
                 <Text style={styles.emptySubtext}>
@@ -911,7 +981,7 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
               </View>
             )}
 
-            {activePaymentTab === 'buyer' && payments.length > 0 && (
+            {activePaymentTab === 'buyer' && filteredPayments.length > 0 && (
               <>
                 <Text style={styles.sectionTitle}>Payments by Customer</Text>
                 {getPaymentsByCustomer().map((customer, index) => (
@@ -964,7 +1034,7 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
               </>
             )}
 
-            {activePaymentTab === 'seller' && sellerPaymentsOnly.length > 0 && (
+            {activePaymentTab === 'seller' && filteredPaymentsToSellers.length > 0 && (
               <>
                 <Text style={styles.sectionTitle}>Payments by Seller</Text>
                 {getPaymentsBySeller().map((seller, index) => (
@@ -1276,6 +1346,51 @@ const styles = StyleSheet.create({
   tabTextActive: {
     color: '#1a1a1a',
     fontWeight: '600',
+  },
+  dateFilterBar: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  dateFilterRow: {
+    flexDirection: 'row',
+    marginBottom: 0,
+  },
+  dateFilterTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginRight: 8,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+  },
+  dateFilterTabActive: {
+    backgroundColor: '#4CAF50',
+  },
+  dateFilterTabText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '600',
+  },
+  dateFilterTabTextActive: {
+    color: '#fff',
+  },
+  dateFilterInputs: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  dateFilterField: {
+    flex: 1,
+  },
+  dateFilterLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+  },
+  dateFilterInput: {
+    marginBottom: 0,
   },
   content: {
     flex: 1,

@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import { authService } from '../../services/auth/authService';
 import { milkService } from '../../services/milk/milkService';
+import { MILK_SOURCE_TYPES } from '../../constants';
 
 export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
   const [user, setUser] = useState(null);
+  const [milkSource, setMilkSource] = useState('cow');
   const [quantity, setQuantity] = useState('');
-  const [pricePerLiter, setPricePerLiter] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -19,7 +20,6 @@ export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
 
   const handleSubmit = async () => {
     const q = parseFloat(quantity);
-    const p = parseFloat(pricePerLiter);
     if (!user || !user.mobile) {
       Alert.alert('Error', 'User not found. Please login again.');
       return;
@@ -28,27 +28,25 @@ export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
       Alert.alert('Error', 'Enter valid quantity (liters).');
       return;
     }
-    if (!p || p <= 0) {
-      Alert.alert('Error', 'Enter valid price per liter.');
-      return;
-    }
-    const totalAmount = q * p;
+    // Rate is set by admin when they process the request (or from your profile for same milk type)
+    const pricePerLiter = 0;
+    const totalAmount = 0;
     try {
       setLoading(true);
       await milkService.recordSale({
         date: new Date(),
         quantity: q,
-        pricePerLiter: p,
+        pricePerLiter,
         totalAmount,
         buyer: user.name || 'Buyer',
         buyerPhone: String(user.mobile).trim(),
+        milkSource: milkSource || 'cow',
         notes: notes.trim() || undefined,
       });
-      Alert.alert('Done', 'Milk request recorded.', [
+      Alert.alert('Done', 'Milk request recorded. Admin will set the rate.', [
         { text: 'OK', onPress: () => onNavigate('Buyer Dashboard') },
       ]);
       setQuantity('');
-      setPricePerLiter('');
       setNotes('');
     } catch (error) {
       Alert.alert('Error', error?.message || 'Failed to record milk request.');
@@ -68,11 +66,27 @@ export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
       />
       <ScrollView style={styles.content}>
         <Text style={styles.instruction}>
-          Enter milk quantity and rate. This will be recorded as your purchase.
+          Select milk type and quantity. Rate is as per your profile; if you request a different milk type, admin will set the price.
         </Text>
-        <Input placeholder="Quantity (liters)" keyboardType="decimal-pad" value={quantity} onChangeText={setQuantity} style={styles.input} />
-        <Input placeholder="Price per liter (Rs)" keyboardType="decimal-pad" value={pricePerLiter} onChangeText={setPricePerLiter} style={styles.input} />
-        <Input placeholder="Notes (optional)" value={notes} onChangeText={setNotes} style={styles.input} />
+        <Text style={styles.label}>Milk type</Text>
+        <View style={styles.milkSourceRow}>
+          {MILK_SOURCE_TYPES.map((src) => {
+            const isActive = milkSource === src.value;
+            return (
+              <TouchableOpacity
+                key={src.value}
+                style={[styles.milkSourceChip, isActive && styles.milkSourceChipActive]}
+                onPress={() => setMilkSource(src.value)}
+              >
+                <Text style={[styles.milkSourceChipText, isActive && styles.milkSourceChipTextActive]}>{src.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.label}>Quantity (liters) *</Text>
+        <Input placeholder="e.g. 5" keyboardType="decimal-pad" value={quantity} onChangeText={setQuantity} style={styles.input} />
+        <Text style={styles.label}>Notes (optional)</Text>
+        <Input placeholder="Any note for admin" value={notes} onChangeText={setNotes} style={styles.input} />
         <Button title={loading ? 'Saving...' : 'Submit Milk Request'} onPress={handleSubmit} disabled={loading} />
       </ScrollView>
     </View>
@@ -83,5 +97,18 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
   content: { flex: 1, padding: 20 },
   instruction: { fontSize: 14, color: '#666', marginBottom: 20 },
+  label: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 8 },
+  milkSourceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  milkSourceChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  milkSourceChipActive: { backgroundColor: '#4CAF50', borderColor: '#4CAF50' },
+  milkSourceChipText: { fontSize: 15, fontWeight: '600', color: '#555' },
+  milkSourceChipTextActive: { color: '#fff' },
   input: { marginBottom: 12, backgroundColor: '#fff' },
 });
