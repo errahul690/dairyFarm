@@ -299,6 +299,17 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
           ? parseFloat(formData.amountReceived) : undefined,
         milkSource: formData.milkSource || 'cow',
       };
+      if (transactionType === 'sale' && formData.contactPhone) {
+        const buyer = buyers.find((b) => b.mobile?.trim() === formData.contactPhone.trim());
+        if (buyer?.userId) transactionData.buyerId = buyer.userId;
+      } else if (transactionType === 'purchase' && formData.contactPhone) {
+        const seller = sellers.find((s) => s.mobile?.trim() === formData.contactPhone.trim());
+        if (seller?.userId) transactionData.sellerId = seller.userId;
+      }
+      if (editingTransaction) {
+        if (editingTransaction.buyerId) transactionData.buyerId = editingTransaction.buyerId;
+        if (editingTransaction.sellerId) transactionData.sellerId = editingTransaction.sellerId;
+      }
 
       if (editingTransaction) {
         // Update existing transaction

@@ -66,9 +66,9 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
 
   const todayDateStr = useMemo(() => getTodayDateStr(), []);
 
-  const loadData = async () => {
+  const loadData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [buyersList, txList, overridesList] = await Promise.all([
         buyerService.getBuyers(true),
         milkService.getTransactions(),
@@ -78,9 +78,9 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       setTransactions(Array.isArray(txList) ? txList : []);
       setOverrides(Array.isArray(overridesList) ? overridesList : []);
     } catch (e) {
-      Alert.alert('Error', 'Failed to load data.');
+      if (!silent) Alert.alert('Error', 'Failed to load data.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -168,7 +168,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     try {
       setActionLoading(buyer.mobile);
       await milkService.quickSale(buyer.mobile);
-      await loadData();
+      await loadData(true);
     } catch (e) {
       Alert.alert('Error', e?.message || 'Quick sale failed.');
     } finally {
@@ -198,7 +198,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       setActionLoading(customModal.mobile);
       await milkService.quickSale(customModal.mobile, q, p, customModal.milkSource);
       setCustomModal(null);
-      await loadData();
+      await loadData(true);
     } catch (e) {
       Alert.alert('Error', e?.message || 'Quick sale failed.');
     } finally {

@@ -16,7 +16,7 @@ import { formatCurrency } from '../../utils/currencyUtils';
 
 /**
  * Pending Payments Screen
- * Shows list of buyers with pending balance (name + amount) and total pending amount.
+ * Shows list of buyers with amount to collect (milk dues) — payment bni hai lene ke liye.
  */
 export default function PendingPaymentsScreen({ onNavigate, onLogout }) {
   const [transactions, setTransactions] = useState([]);
@@ -92,11 +92,52 @@ export default function PendingPaymentsScreen({ onNavigate, onLogout }) {
     [pendingList]
   );
 
+  // Last month end date — last day of previous month
+  const endOfLastMonthStr = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    d.setDate(1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+  }, []);
+
+  const totalLastMonthPending = useMemo(() => {
+    const milkUntilLastMonth = new Map();
+    transactions.forEach((tx) => {
+      if (tx.type !== 'sale' || !tx.buyerPhone) return;
+      const key = tx.buyerPhone.trim();
+      const txDate = tx.date ? (typeof tx.date === 'string' ? tx.date : new Date(tx.date).toISOString().split('T')[0]) : '';
+      if (txDate && txDate <= endOfLastMonthStr) {
+        milkUntilLastMonth.set(key, (milkUntilLastMonth.get(key) || 0) + (tx.totalAmount || 0));
+      }
+    });
+
+    const paidUntilLastMonth = new Map();
+    payments.forEach((p) => {
+      const key = String(p.customerMobile || '').trim();
+      if (!key) return;
+      const pDate = p.paymentDate
+        ? (p.paymentDate instanceof Date ? p.paymentDate.toISOString().split('T')[0] : new Date(p.paymentDate).toISOString().split('T')[0])
+        : '';
+      if (pDate && pDate <= endOfLastMonthStr) {
+        paidUntilLastMonth.set(key, (paidUntilLastMonth.get(key) || 0) + (Number(p.amount) || 0));
+      }
+    });
+
+    let total = 0;
+    milkUntilLastMonth.forEach((milk, key) => {
+      const paid = paidUntilLastMonth.get(key) || 0;
+      const pending = milk - paid;
+      if (pending > 0) total += pending;
+    });
+    return total;
+  }, [transactions, payments, endOfLastMonthStr]);
+
   return (
     <View style={styles.container}>
       <HeaderWithMenu
         title="HiTech Dairy Farm"
-        subtitle="Pending Payments"
+        subtitle="Payments to collect"
         onNavigate={onNavigate}
         isAuthenticated={true}
         onLogout={onLogout}
@@ -110,21 +151,26 @@ export default function PendingPaymentsScreen({ onNavigate, onLogout }) {
         ) : (
           <>
             <View style={styles.totalCard}>
-              <Text style={styles.totalLabel}>Total Pending</Text>
+              <Text style={styles.totalLabel}>Total to collect</Text>
               <Text style={styles.totalAmount}>{formatCurrency(totalPending)}</Text>
+              {totalLastMonthPending > 0 && (
+                <Text style={styles.lastMonthPending}>
+                  Last month pending: {formatCurrency(totalLastMonthPending)}
+                </Text>
+              )}
               <Text style={styles.totalSubtext}>
-                {pendingList.length} buyer{pendingList.length !== 1 ? 's' : ''} with dues
+                {pendingList.length} buyer{pendingList.length !== 1 ? 's' : ''} with dues (Milk)
               </Text>
             </View>
 
             {pendingList.length === 0 ? (
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No pending payments</Text>
-                <Text style={styles.emptySubtext}>All buyer dues are settled.</Text>
+                <Text style={styles.emptyText}>No amount to collect</Text>
+                <Text style={styles.emptySubtext}>All milk dues from buyers are settled.</Text>
               </View>
             ) : (
               <View style={styles.listContainer}>
-                <Text style={styles.listTitle}>Name & Amount</Text>
+                <Text style={styles.listTitle}>Name & amount to collect</Text>
                 {pendingList.map((item, index) => (
                   <TouchableOpacity
                     key={`${item.phone}-${index}`}
@@ -183,6 +229,12 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  lastMonthPending: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 8,
+    fontWeight: '500',
   },
   totalSubtext: {
     fontSize: 13,

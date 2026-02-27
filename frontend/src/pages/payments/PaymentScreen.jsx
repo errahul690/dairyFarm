@@ -666,6 +666,44 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
     [paymentDateFilter, filterDateFrom, filterDateTo, sellerPaymentsOnly]
   );
 
+  const endOfLastMonthStr = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    d.setDate(1);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+  }, []);
+
+  const totalLastMonthPending = useMemo(() => {
+    const milkUntilLastMonth = new Map();
+    (milkTransactions || []).forEach((tx) => {
+      if (tx.type !== 'sale' || !tx.buyerPhone) return;
+      const key = String(tx.buyerPhone).trim();
+      const txDate = tx.date ? (typeof tx.date === 'string' ? tx.date : new Date(tx.date).toISOString().split('T')[0]) : '';
+      if (txDate && txDate <= endOfLastMonthStr) {
+        milkUntilLastMonth.set(key, (milkUntilLastMonth.get(key) || 0) + (Number(tx.totalAmount) || 0));
+      }
+    });
+    const paidUntilLastMonth = new Map();
+    (payments || []).forEach((p) => {
+      const key = String(p.customerMobile || '').trim();
+      if (!key) return;
+      const pDate = p.paymentDate
+        ? (p.paymentDate instanceof Date ? p.paymentDate.toISOString().split('T')[0] : new Date(p.paymentDate).toISOString().split('T')[0])
+        : '';
+      if (pDate && pDate <= endOfLastMonthStr) {
+        paidUntilLastMonth.set(key, (paidUntilLastMonth.get(key) || 0) + (Number(p.amount) || 0));
+      }
+    });
+    let total = 0;
+    milkUntilLastMonth.forEach((milk, key) => {
+      const paid = paidUntilLastMonth.get(key) || 0;
+      const pending = milk - paid;
+      if (pending > 0) total += pending;
+    });
+    return total;
+  }, [milkTransactions, payments, endOfLastMonthStr]);
+
   const getPaymentsByCustomer = () => {
     const customerMap = new Map();
     filteredPayments.forEach((payment) => {
@@ -813,6 +851,9 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
               <View style={[styles.summaryCard, styles.summaryCardBuyer]}>
                 <Text style={styles.summaryTitle}>From buyers</Text>
                 <Text style={styles.summaryValue}>{formatCurrency(getTotalPayments())}</Text>
+                {totalLastMonthPending > 0 && (
+                  <Text style={styles.summaryLastMonthPending}>Last month pending: {formatCurrency(totalLastMonthPending)}</Text>
+                )}
                 <Text style={styles.summarySubtext}>{filteredPayments.length} Payment{filteredPayments.length !== 1 ? 's' : ''}</Text>
               </View>
             )}
@@ -1469,6 +1510,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#FFFFFF',
     marginBottom: 4,
+  },
+  summaryLastMonthPending: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.95)',
+    marginTop: 6,
+    fontWeight: '500',
   },
   summarySubtext: {
     fontSize: 14,

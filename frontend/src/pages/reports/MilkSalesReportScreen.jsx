@@ -13,11 +13,14 @@ import {
 } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import Input from '../../components/common/Input';
+import Button from '../../components/common/Button';
 import { formatDate } from '../../utils/dateUtils';
 import { formatCurrency } from '../../utils/currencyUtils';
 import { MILK_SOURCE_TYPES } from '../../constants';
 import { milkService } from '../../services/milk/milkService';
 import { buyerService } from '../../services/buyers/buyerService';
+import { paymentService } from '../../services/payments/paymentService';
+import { authService } from '../../services/auth/authService';
 import { reportService } from '../../services/reports/reportService';
 import { getAuthToken } from '../../services/api/apiClient';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -46,19 +49,48 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
   const [selectedConsumerForDownload, setSelectedConsumerForDownload] = useState(null);
   const [showConsumerPicker, setShowConsumerPicker] = useState(false);
 
+  const [useDateFilter, setUseDateFilter] = useState(false);
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().split('T')[0];
+  });
+  const [dateTo, setDateTo] = useState(() => now.toISOString().split('T')[0]);
+
+  const [payments, setPayments] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [expandedBuyerMobile, setExpandedBuyerMobile] = useState(null);
+  const [reportLogTab, setReportLogTab] = useState('milk');
+  const [showAddMilkModal, setShowAddMilkModal] = useState(false);
+  const [addMilkBuyer, setAddMilkBuyer] = useState(null);
+  const [milkTxForm, setMilkTxForm] = useState({ quantity: '', date: '', pricePerLiter: '' });
+  const [addMilkLoading, setAddMilkLoading] = useState(false);
+  const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
+  const [addPaymentBuyer, setAddPaymentBuyer] = useState(null);
+  const [paymentForm, setPaymentForm] = useState({ amount: '', date: '' });
+  const [addPaymentLoading, setAddPaymentLoading] = useState(false);
+
   useEffect(() => {
     loadData();
+    authService.getCurrentUser().then(setCurrentUser);
   }, []);
+
+  const getTodayDateStr = () => {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const [txData, buyersData] = await Promise.all([
+      const [txData, buyersData, paymentData] = await Promise.all([
         milkService.getTransactions(),
         buyerService.getBuyers().catch(() => []),
+        paymentService.getPayments().catch(() => []),
       ]);
       setTransactions(txData);
       setBuyers(buyersData);
+      setPayments(Array.isArray(paymentData) ? paymentData : []);
     } catch (error) {
       console.error('Failed to load data:', error);
       Alert.alert('Error', 'Failed to load sales data. Please try again.');
@@ -157,10 +189,23 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
     setReportYear(y);
   };
 
-  // Filter sales transactions only
+  // Filter sales transactions by type and optional date range
   const salesTransactions = useMemo(() => {
-    return transactions.filter((tx) => tx.type === 'sale');
-  }, [transactions]);
+    let list = transactions.filter((tx) => tx.type === 'sale');
+    if (useDateFilter && dateFrom && dateTo) {
+      const from = new Date(dateFrom);
+      const to = new Date(dateTo);
+      from.setHours(0, 0, 0, 0);
+      to.setHours(23, 59, 59, 999);
+      if (!isNaN(from.getTime()) && !isNaN(to.getTime()) && from <= to) {
+        list = list.filter((tx) => {
+          const d = new Date(tx.date);
+          return d >= from && d <= to;
+        });
+      }
+    }
+    return list;
+  }, [transactions, useDateFilter, dateFrom, dateTo]);
 
   // Calculate buyer-wise sales summary
   const buyerSalesSummary = useMemo(() => {
@@ -173,6 +218,7 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
         summaryMap.set(key, {
           name: buyer.name,
           mobile: buyer.mobile,
+          userId: buyer.userId ? String(buyer.userId) : undefined,
           email: buyer.email || '',
           fixedPrice: buyer.rate,
           dailyQuantity: buyer.quantity,
@@ -196,6 +242,7 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
           buyerSummary = {
             name: tx.buyer || 'Unknown',
             mobile: tx.buyerPhone,
+            userId: undefined,
             email: '',
             fixedPrice: undefined,
             dailyQuantity: undefined,
@@ -269,6 +316,117 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
     };
   }, [salesTransactions]);
 
+  const canEditUsers = currentUser?.role === 0 || currentUser?.role === 1;
+
+  const getBuyerMilkTransactions = (phone) => {
+    const p = (phone || '').trim();
+    return (transactions || [])
+      .filter((tx) => tx.type === 'sale' && (tx.buyerPhone || '').trim() === p)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  };
+
+  const getBuyerPaymentTransactions = (phone) => {
+    const p = (phone || '').trim();
+    return (payments || [])
+      .filter((pay) => String(pay.customerMobile || '').trim() === p)
+      .sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime());
+  };
+
+  const openAddMilkModal = (buyer) => {
+    setAddMilkBuyer(buyer);
+    setMilkTxForm({
+      quantity: buyer.dailyQuantity != null ? String(buyer.dailyQuantity) : '',
+      date: getTodayDateStr(),
+      pricePerLiter: buyer.fixedPrice != null ? String(buyer.fixedPrice) : '',
+    });
+    setShowAddMilkModal(true);
+  };
+
+  const handleAddMilkTransaction = async () => {
+    if (!addMilkBuyer?.mobile) return;
+    const q = parseFloat(milkTxForm.quantity);
+    const rate = parseFloat(milkTxForm.pricePerLiter);
+    if (isNaN(q) || q <= 0) {
+      Alert.alert('Error', 'Enter valid quantity (number > 0)');
+      return;
+    }
+    if (isNaN(rate) || rate < 0) {
+      Alert.alert('Error', 'Enter valid rate per liter');
+      return;
+    }
+    const dateObj = new Date(milkTxForm.date);
+    if (isNaN(dateObj.getTime())) {
+      Alert.alert('Error', 'Enter valid date (e.g. YYYY-MM-DD)');
+      return;
+    }
+    const totalAmount = Math.round(q * rate * 100) / 100;
+    const milkSource = (addMilkBuyer.milkSources && addMilkBuyer.milkSources[0]) || 'cow';
+    try {
+      setAddMilkLoading(true);
+      await milkService.recordSale({
+        date: dateObj,
+        quantity: q,
+        pricePerLiter: rate,
+        totalAmount,
+        buyer: addMilkBuyer.name,
+        buyerPhone: addMilkBuyer.mobile,
+        buyerId: addMilkBuyer.userId,
+        milkSource,
+      });
+      setShowAddMilkModal(false);
+      setAddMilkBuyer(null);
+      await loadData();
+      Alert.alert('Success', 'Milk transaction added.');
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Failed to add transaction.');
+    } finally {
+      setAddMilkLoading(false);
+    }
+  };
+
+  const openAddPaymentModal = (buyer) => {
+    setAddPaymentBuyer(buyer);
+    setPaymentForm({ amount: '', date: getTodayDateStr() });
+    setShowAddPaymentModal(true);
+  };
+
+  const handleAddPaymentTransaction = async () => {
+    if (!addPaymentBuyer?.mobile || !addPaymentBuyer?.userId) {
+      Alert.alert('Error', 'This buyer has no user account. Add payment from Buyer or Payments screen.');
+      return;
+    }
+    const amount = parseFloat(paymentForm.amount);
+    if (isNaN(amount) || amount <= 0) {
+      Alert.alert('Error', 'Enter valid amount (number > 0)');
+      return;
+    }
+    const dateObj = new Date(paymentForm.date);
+    if (isNaN(dateObj.getTime())) {
+      Alert.alert('Error', 'Enter valid date (e.g. YYYY-MM-DD)');
+      return;
+    }
+    try {
+      setAddPaymentLoading(true);
+      await paymentService.createPayment({
+        customerId: addPaymentBuyer.userId,
+        customerName: addPaymentBuyer.name,
+        customerMobile: addPaymentBuyer.mobile,
+        amount,
+        paymentDate: dateObj,
+        paymentType: 'cash',
+        paymentDirection: 'from_buyer',
+      });
+      setShowAddPaymentModal(false);
+      setAddPaymentBuyer(null);
+      await loadData();
+      Alert.alert('Success', 'Payment recorded.');
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Failed to add payment.');
+    } finally {
+      setAddPaymentLoading(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <HeaderWithMenu
@@ -278,6 +436,34 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
         isAuthenticated={true}
         onLogout={onLogout}
       />
+      <View style={styles.dateFilterStrip}>
+        <View style={styles.dateFilterRow}>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, !useDateFilter && styles.dateFilterTabActive]}
+            onPress={() => setUseDateFilter(false)}
+          >
+            <Text style={[styles.dateFilterTabText, !useDateFilter && styles.dateFilterTabTextActive]}>All</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, useDateFilter && styles.dateFilterTabActive]}
+            onPress={() => setUseDateFilter(true)}
+          >
+            <Text style={[styles.dateFilterTabText, useDateFilter && styles.dateFilterTabTextActive]}>Date</Text>
+          </TouchableOpacity>
+        </View>
+        {useDateFilter && (
+          <View style={styles.dateFilterInputRow}>
+            <View style={styles.dateFilterField}>
+              <Text style={styles.dateFilterLabel}>From</Text>
+              <Input value={dateFrom} onChangeText={setDateFrom} placeholder="YYYY-MM-DD" style={styles.dateFilterInput} />
+            </View>
+            <View style={styles.dateFilterField}>
+              <Text style={styles.dateFilterLabel}>To</Text>
+              <Input value={dateTo} onChangeText={setDateTo} placeholder="YYYY-MM-DD" style={styles.dateFilterInput} />
+            </View>
+          </View>
+        )}
+      </View>
       <ScrollView style={styles.content}>
         {/* Search Bar */}
         <View style={styles.searchContainer}>
@@ -399,7 +585,9 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
 
         {/* Overall Statistics */}
         <View style={styles.statsContainer}>
-          <Text style={styles.sectionTitle}>Overall Sales Summary</Text>
+          <Text style={styles.sectionTitle}>
+            Overall Sales Summary{useDateFilter ? ' (period)' : ''}
+          </Text>
           
           <View style={styles.statsGrid}>
             <View style={[styles.statCard, styles.statCardPrimary]}>
@@ -533,24 +721,38 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
             </View>
           ) : (
             filteredBuyerSales
-              .sort((a, b) => b.totalAmount - a.totalAmount) // Sort by total amount (highest first)
-              .map((buyer, index) => (
+              .sort((a, b) => b.totalAmount - a.totalAmount)
+              .map((buyer, index) => {
+                const isExpanded = expandedBuyerMobile === (buyer.mobile || '').trim();
+                const buyerMilkTxs = getBuyerMilkTransactions(buyer.mobile);
+                const buyerPaymentTxs = getBuyerPaymentTransactions(buyer.mobile);
+                const buyerForModal = { ...buyer, phone: buyer.mobile };
+                return (
                 <View key={index} style={styles.buyerCard}>
-                  <View style={styles.buyerCardHeader}>
-                    <View style={styles.buyerCardHeaderLeft}>
-                      <Text style={styles.buyerName}>{buyer.name}</Text>
-                      <View style={styles.buyerContactInfo}>
-                        <Text style={styles.buyerMobile}>📱 {buyer.mobile}</Text>
-                        {buyer.email && (
-                          <Text style={styles.buyerEmail}>✉️ {buyer.email}</Text>
-                        )}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setExpandedBuyerMobile(isExpanded ? null : (buyer.mobile || '').trim());
+                      if (!isExpanded) setReportLogTab('milk');
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.buyerCardHeader}>
+                      <View style={styles.buyerCardHeaderLeft}>
+                        <Text style={styles.buyerName}>{buyer.name}</Text>
+                        <View style={styles.buyerContactInfo}>
+                          <Text style={styles.buyerMobile}>📱 {buyer.mobile}</Text>
+                          {buyer.email && (
+                            <Text style={styles.buyerEmail}>✉️ {buyer.email}</Text>
+                          )}
+                        </View>
+                      </View>
+                      <View style={styles.buyerCardHeaderRight}>
+                        <Text style={styles.buyerTotalAmount}>{formatCurrency(buyer.totalAmount)}</Text>
+                        <Text style={styles.buyerTotalQuantity}>{buyer.totalQuantity.toFixed(2)} L</Text>
+                        <Text style={styles.expandIcon}>{isExpanded ? '▲' : '▼'}</Text>
                       </View>
                     </View>
-                    <View style={styles.buyerCardHeaderRight}>
-                      <Text style={styles.buyerTotalAmount}>{formatCurrency(buyer.totalAmount)}</Text>
-                      <Text style={styles.buyerTotalQuantity}>{buyer.totalQuantity.toFixed(2)} L</Text>
-                    </View>
-                  </View>
+                  </TouchableOpacity>
                   {buyer.milkSources && buyer.milkSources.length > 0 && (
                     <View style={styles.buyerMilkSourcesRow}>
                       <Text style={styles.buyerMilkSourcesLabel}>Source: </Text>
@@ -589,66 +791,206 @@ export default function MilkSalesReportScreen({ onNavigate, onLogout }) {
                       </View>
                     )}
 
-                    {/* Transaction List */}
-                    {buyer.transactions.length > 0 && (
-                      <View style={styles.transactionsList}>
-                        <Text style={styles.transactionsListTitle}>Recent Transactions:</Text>
-                        {buyer.transactions
-                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                          .slice(0, 5) // Show last 5 transactions
-                          .map((tx, txIndex) => (
-                            <View key={txIndex} style={styles.transactionRow}>
-                              <View style={styles.transactionRowLeft}>
-                                <Text style={styles.transactionDate}>{formatDate(new Date(tx.date))}</Text>
-                                <Text style={styles.transactionDetails}>
-                                  {tx.quantity.toFixed(2)} L {getMilkSourceLabel(tx.milkSource)} @ {formatCurrency(tx.pricePerLiter)}/L
-                                </Text>
-                              </View>
-                              <Text style={styles.transactionAmount}>{formatCurrency(tx.totalAmount)}</Text>
-                            </View>
-                          ))}
-                        {buyer.transactions.length > 5 && (
-                          <Text style={styles.moreTransactionsText}>
-                            +{buyer.transactions.length - 5} more transactions
-                          </Text>
+                    {isExpanded ? (
+                      <View style={styles.reportTabsContainer}>
+                        <View style={styles.reportLogTabs}>
+                          <TouchableOpacity
+                            style={[styles.reportLogTab, reportLogTab === 'milk' && styles.reportLogTabActive]}
+                            onPress={() => setReportLogTab('milk')}
+                          >
+                            <Text style={[styles.reportLogTabText, reportLogTab === 'milk' && styles.reportLogTabTextActive]}>
+                              Milk Transactions ({buyerMilkTxs.length})
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.reportLogTab, reportLogTab === 'payments' && styles.reportLogTabActive]}
+                            onPress={() => setReportLogTab('payments')}
+                          >
+                            <Text style={[styles.reportLogTabText, reportLogTab === 'payments' && styles.reportLogTabTextActive]}>
+                              Payment Transactions ({buyerPaymentTxs.length})
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        {reportLogTab === 'milk' && (
+                          <>
+                            {canEditUsers && (
+                              <TouchableOpacity
+                                style={styles.addMilkTxButton}
+                                onPress={() => openAddMilkModal(buyerForModal)}
+                              >
+                                <Text style={styles.addMilkTxButtonText}>+ Add Milk Transaction</Text>
+                              </TouchableOpacity>
+                            )}
+                            {buyerMilkTxs.length > 0 ? (
+                              buyerMilkTxs.map((tx) => (
+                                <View key={tx._id} style={styles.reportTransactionItem}>
+                                  <View style={styles.reportTransactionRow}>
+                                    <Text style={styles.reportTransactionDate}>{formatDate(new Date(tx.date))}</Text>
+                                    <Text style={styles.reportTransactionAmount}>{formatCurrency(tx.totalAmount)}</Text>
+                                  </View>
+                                  <Text style={styles.reportTransactionDetails}>
+                                    {tx.quantity.toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
+                                  </Text>
+                                </View>
+                              ))
+                            ) : (
+                              <Text style={styles.noLogsText}>No milk transactions yet.</Text>
+                            )}
+                          </>
+                        )}
+
+                        {reportLogTab === 'payments' && (
+                          <>
+                            {canEditUsers && (
+                              <TouchableOpacity
+                                style={styles.addMilkTxButton}
+                                onPress={() => openAddPaymentModal(buyerForModal)}
+                              >
+                                <Text style={styles.addMilkTxButtonText}>+ Add Payment</Text>
+                              </TouchableOpacity>
+                            )}
+                            {buyerPaymentTxs.length > 0 ? (
+                              buyerPaymentTxs.map((pay) => (
+                                <View key={pay._id} style={styles.reportTransactionItem}>
+                                  <View style={styles.reportTransactionRow}>
+                                    <Text style={styles.reportTransactionDate}>{formatDate(pay.paymentDate)}</Text>
+                                    <Text style={styles.reportTransactionAmount}>{formatCurrency(pay.amount)}</Text>
+                                  </View>
+                                  <Text style={styles.reportTransactionDetails}>
+                                    {[pay.paymentType, pay.paymentDirection].filter(Boolean).join(' · ') || 'Payment'}
+                                  </Text>
+                                </View>
+                              ))
+                            ) : (
+                              <Text style={styles.noLogsText}>No payment transactions yet.</Text>
+                            )}
+                          </>
                         )}
                       </View>
-                    )}
+                    ) : (
+                      <>
+                        {buyer.transactions.length > 0 && (
+                          <View style={styles.transactionsList}>
+                            <Text style={styles.transactionsListTitle}>Recent Transactions:</Text>
+                            {buyer.transactions
+                              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                              .slice(0, 5)
+                              .map((tx, txIndex) => (
+                                <View key={txIndex} style={styles.transactionRow}>
+                                  <View style={styles.transactionRowLeft}>
+                                    <Text style={styles.transactionDate}>{formatDate(new Date(tx.date))}</Text>
+                                    <Text style={styles.transactionDetails}>
+                                      {tx.quantity.toFixed(2)} L {getMilkSourceLabel(tx.milkSource)} @ {formatCurrency(tx.pricePerLiter)}/L
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.transactionAmount}>{formatCurrency(tx.totalAmount)}</Text>
+                                </View>
+                              ))}
+                            {buyer.transactions.length > 5 && (
+                              <Text style={styles.moreTransactionsText}>
+                                +{buyer.transactions.length - 5} more — tap card to see all
+                              </Text>
+                            )}
+                          </View>
+                        )}
 
-                    {/* Download this customer - month from top selector */}
-                    <View style={styles.buyerDownloadRow}>
-                      <Text style={styles.buyerDownloadLabel}>Download this customer:</Text>
-                      <View style={styles.buyerDownloadButtons}>
-                        <TouchableOpacity
-                          style={[styles.buyerDownloadBtn, styles.buyerDownloadBtnExcel]}
-                          onPress={() => handleDownloadExport('excel', buyer.mobile)}
-                          disabled={downloadLoading != null}
-                        >
-                          {downloadLoading === `excel-${buyer.mobile}` ? (
-                            <ActivityIndicator color="#fff" size="small" />
-                          ) : (
-                            <Text style={styles.buyerDownloadBtnText}>Excel</Text>
-                          )}
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.buyerDownloadBtn, styles.buyerDownloadBtnPdf]}
-                          onPress={() => handleDownloadExport('pdf', buyer.mobile)}
-                          disabled={downloadLoading != null}
-                        >
-                          {downloadLoading === `pdf-${buyer.mobile}` ? (
-                            <ActivityIndicator color="#fff" size="small" />
-                          ) : (
-                            <Text style={styles.buyerDownloadBtnText}>PDF</Text>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    </View>
+                        <View style={styles.buyerDownloadRow}>
+                          <Text style={styles.buyerDownloadLabel}>Download this customer:</Text>
+                          <View style={styles.buyerDownloadButtons}>
+                            <TouchableOpacity
+                              style={[styles.buyerDownloadBtn, styles.buyerDownloadBtnExcel]}
+                              onPress={() => handleDownloadExport('excel', buyer.mobile)}
+                              disabled={downloadLoading != null}
+                            >
+                              {downloadLoading === `excel-${buyer.mobile}` ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                              ) : (
+                                <Text style={styles.buyerDownloadBtnText}>Excel</Text>
+                              )}
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.buyerDownloadBtn, styles.buyerDownloadBtnPdf]}
+                              onPress={() => handleDownloadExport('pdf', buyer.mobile)}
+                              disabled={downloadLoading != null}
+                            >
+                              {downloadLoading === `pdf-${buyer.mobile}` ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                              ) : (
+                                <Text style={styles.buyerDownloadBtnText}>PDF</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </>
+                    )}
                   </View>
                 </View>
-              ))
+                );
+              })
           )}
         </View>
       </ScrollView>
+
+      {/* Add Milk Transaction Modal */}
+      <Modal
+        visible={showAddMilkModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setShowAddMilkModal(false); setAddMilkBuyer(null); }}
+      >
+        <View style={styles.modalOverlayReport}>
+          <View style={styles.modalBoxReport}>
+            <Text style={styles.modalTitleReport}>Add Milk Transaction</Text>
+            {addMilkBuyer && (
+              <>
+                <Text style={styles.modalSubtitleReport}>{addMilkBuyer.name} · {addMilkBuyer.mobile}</Text>
+                <Text style={styles.modalLabelReport}>Quantity (L) *</Text>
+                <Input placeholder="e.g. 10" value={milkTxForm.quantity} onChangeText={(t) => setMilkTxForm((f) => ({ ...f, quantity: t }))} keyboardType="decimal-pad" style={styles.modalInputReport} />
+                <Text style={styles.modalLabelReport}>Date (YYYY-MM-DD) *</Text>
+                <Input placeholder="e.g. 2025-02-27" value={milkTxForm.date} onChangeText={(t) => setMilkTxForm((f) => ({ ...f, date: t }))} style={styles.modalInputReport} />
+                <Text style={styles.modalLabelReport}>Rate (₹/L) *</Text>
+                <Input placeholder="e.g. 55" value={milkTxForm.pricePerLiter} onChangeText={(t) => setMilkTxForm((f) => ({ ...f, pricePerLiter: t }))} keyboardType="decimal-pad" style={styles.modalInputReport} />
+                <View style={styles.modalButtonsReport}>
+                  <TouchableOpacity style={styles.modalCancelReport} onPress={() => { setShowAddMilkModal(false); setAddMilkBuyer(null); }}>
+                    <Text style={styles.modalCancelTextReport}>Cancel</Text>
+                  </TouchableOpacity>
+                  <Button title={addMilkLoading ? 'Saving...' : 'Add'} onPress={handleAddMilkTransaction} disabled={addMilkLoading} />
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add Payment Modal */}
+      <Modal
+        visible={showAddPaymentModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => { setShowAddPaymentModal(false); setAddPaymentBuyer(null); }}
+      >
+        <View style={styles.modalOverlayReport}>
+          <View style={styles.modalBoxReport}>
+            <Text style={styles.modalTitleReport}>Add Payment</Text>
+            {addPaymentBuyer && (
+              <>
+                <Text style={styles.modalSubtitleReport}>{addPaymentBuyer.name} · {addPaymentBuyer.mobile}</Text>
+                <Text style={styles.modalLabelReport}>Amount (₹) *</Text>
+                <Input placeholder="e.g. 500" value={paymentForm.amount} onChangeText={(t) => setPaymentForm((f) => ({ ...f, amount: t }))} keyboardType="decimal-pad" style={styles.modalInputReport} />
+                <Text style={styles.modalLabelReport}>Date (YYYY-MM-DD) *</Text>
+                <Input placeholder="e.g. 2025-02-27" value={paymentForm.date} onChangeText={(t) => setPaymentForm((f) => ({ ...f, date: t }))} style={styles.modalInputReport} />
+                <View style={styles.modalButtonsReport}>
+                  <TouchableOpacity style={styles.modalCancelReport} onPress={() => { setShowAddPaymentModal(false); setAddPaymentBuyer(null); }}>
+                    <Text style={styles.modalCancelTextReport}>Cancel</Text>
+                  </TouchableOpacity>
+                  <Button title={addPaymentLoading ? 'Saving...' : 'Add'} onPress={handleAddPaymentTransaction} disabled={addPaymentLoading} />
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -661,6 +1003,51 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 15,
+  },
+  dateFilterStrip: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  dateFilterRow: {
+    flexDirection: 'row',
+    marginBottom: 0,
+  },
+  dateFilterTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginRight: 8,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+  },
+  dateFilterTabActive: {
+    backgroundColor: '#2196F3',
+  },
+  dateFilterTabText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '600',
+  },
+  dateFilterTabTextActive: {
+    color: '#fff',
+  },
+  dateFilterInputRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 10,
+  },
+  dateFilterField: {
+    flex: 1,
+  },
+  dateFilterLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+  },
+  dateFilterInput: {
+    marginBottom: 0,
   },
   searchContainer: {
     marginBottom: 15,
@@ -956,6 +1343,134 @@ const styles = StyleSheet.create({
   buyerTotalQuantity: {
     fontSize: 14,
     color: '#666',
+  },
+  expandIcon: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+  reportTabsContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  reportLogTabs: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    backgroundColor: '#E8E8E8',
+    borderRadius: 8,
+    padding: 4,
+  },
+  reportLogTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  reportLogTabActive: {
+    backgroundColor: '#2196F3',
+  },
+  reportLogTabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#555',
+  },
+  reportLogTabTextActive: {
+    color: '#fff',
+  },
+  addMilkTxButton: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
+  },
+  addMilkTxButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  reportTransactionItem: {
+    backgroundColor: '#F9F9F9',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+  },
+  reportTransactionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  reportTransactionDate: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  reportTransactionAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#2196F3',
+  },
+  reportTransactionDetails: {
+    fontSize: 13,
+    color: '#666',
+  },
+  noLogsText: {
+    fontSize: 13,
+    color: '#777',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  modalOverlayReport: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalBoxReport: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+  },
+  modalTitleReport: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1a1a1a',
+    marginBottom: 8,
+  },
+  modalSubtitleReport: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+  },
+  modalLabelReport: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  modalInputReport: {
+    marginBottom: 12,
+    backgroundColor: '#f5f5f5',
+  },
+  modalButtonsReport: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  modalCancelReport: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+  },
+  modalCancelTextReport: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#555',
   },
   buyerMilkSourcesRow: {
     flexDirection: 'row',

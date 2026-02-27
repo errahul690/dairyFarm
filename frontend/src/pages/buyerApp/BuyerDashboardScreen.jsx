@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
+import Input from '../../components/common/Input';
 import { milkService } from '../../services/milk/milkService';
 import { paymentService } from '../../services/payments/paymentService';
 import { formatCurrency } from '../../utils/currencyUtils';
@@ -20,10 +21,23 @@ const formatDate = (d) => {
   return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
+function getMonthStart(d) {
+  const x = new Date(d);
+  x.setDate(1);
+  x.setHours(0, 0, 0, 0);
+  return x.toISOString().split('T')[0];
+}
+
+function getTodayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+
 export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
   const [transactions, setTransactions] = useState([]);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState(() => getMonthStart(new Date()));
+  const [dateTo, setDateTo] = useState(getTodayStr());
 
   useEffect(() => {
     loadData();
@@ -56,9 +70,51 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
     [payments]
   );
   const pendingAmount = totalMilkAmount - totalPaid;
-  const recentTransactions = useMemo(
-    () => [...transactions].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5),
-    [transactions]
+
+  const txDateStr = (tx) =>
+    tx.date ? (typeof tx.date === 'string' ? tx.date : new Date(tx.date).toISOString().split('T')[0]) : '';
+  const payDateStr = (p) =>
+    p.paymentDate
+      ? (p.paymentDate instanceof Date ? p.paymentDate.toISOString().split('T')[0] : new Date(p.paymentDate).toISOString().split('T')[0])
+      : '';
+
+  const inRangeTx = useMemo(
+    () => transactions.filter((t) => {
+      const d = txDateStr(t);
+      return d && d >= dateFrom && d <= dateTo;
+    }),
+    [transactions, dateFrom, dateTo]
+  );
+  const inRangePay = useMemo(
+    () => payments.filter((p) => {
+      const d = payDateStr(p);
+      return d && d >= dateFrom && d <= dateTo;
+    }),
+    [payments, dateFrom, dateTo]
+  );
+
+  const periodMilk = useMemo(
+    () => inRangeTx.reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0),
+    [inRangeTx]
+  );
+  const periodPaid = useMemo(
+    () => inRangePay.reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
+    [inRangePay]
+  );
+
+  const pendingUptoToDate = useMemo(() => {
+    const milkUpto = transactions
+      .filter((t) => txDateStr(t) && txDateStr(t) <= dateTo)
+      .reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0);
+    const paidUpto = payments
+      .filter((p) => payDateStr(p) && payDateStr(p) <= dateTo)
+      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    return milkUpto - paidUpto;
+  }, [transactions, payments, dateTo]);
+
+  const recentInRange = useMemo(
+    () => [...inRangeTx].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5),
+    [inRangeTx]
   );
 
   return (
@@ -69,14 +125,42 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
         onNavigate={onNavigate}
         isAuthenticated={true}
         onLogout={onLogout}
+        pendingAmount={pendingAmount > 0 ? pendingAmount : undefined}
       />
       <ScrollView style={styles.content}>
         {loading ? (
           <ActivityIndicator size="large" color="#4CAF50" style={styles.loader} />
         ) : (
           <>
+            <View style={styles.filterCard}>
+              <Text style={styles.filterTitle}>Date filter</Text>
+              <View style={styles.filterRow}>
+                <View style={styles.filterField}>
+                  <Text style={styles.filterLabel}>From</Text>
+                  <Input
+                    value={dateFrom}
+                    onChangeText={setDateFrom}
+                    placeholder="YYYY-MM-DD"
+                    style={styles.filterInput}
+                  />
+                </View>
+                <View style={styles.filterField}>
+                  <Text style={styles.filterLabel}>To</Text>
+                  <Input
+                    value={dateTo}
+                    onChangeText={setDateTo}
+                    placeholder="YYYY-MM-DD"
+                    style={styles.filterInput}
+                  />
+                </View>
+              </View>
+              <Text style={styles.periodSummary}>
+                In this period: Milk {formatCurrency(periodMilk)} · Paid {formatCurrency(periodPaid)} · Pending (as of {dateTo}): {formatCurrency(pendingUptoToDate)}
+              </Text>
+            </View>
+
             <View style={styles.card}>
-              <Text style={styles.cardLabel}>Pending Amount</Text>
+              <Text style={styles.cardLabel}>Total Pending (all)</Text>
               <Text style={[styles.cardValue, pendingAmount > 0 && styles.pendingText]}>
                 {formatCurrency(pendingAmount)}
               </Text>
@@ -100,11 +184,11 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Recent Transactions</Text>
-              {recentTransactions.length === 0 ? (
-                <Text style={styles.emptyText}>No milk purchases yet.</Text>
+              <Text style={styles.sectionTitle}>Recent in selected period</Text>
+              {recentInRange.length === 0 ? (
+                <Text style={styles.emptyText}>No milk purchases in this date range.</Text>
               ) : (
-                recentTransactions.map((tx, i) => {
+                recentInRange.map((tx, i) => {
                   const src = tx.milkSource || 'cow';
                   const sourceLabel = MILK_SOURCE_TYPES.find((s) => s.value === src)?.label || src;
                   return (
@@ -129,10 +213,10 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
 
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => onNavigate('Milk Request')}
+        onPress={() => onNavigate('Pending Payment')}
         activeOpacity={0.8}
       >
-        <Text style={styles.fabText}>+ Milk Request</Text>
+        <Text style={styles.fabText}>Pay</Text>
       </TouchableOpacity>
     </View>
   );
@@ -142,6 +226,23 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
   content: { flex: 1, padding: 16 },
   loader: { marginTop: 40 },
+  filterCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  filterTitle: { fontSize: 16, fontWeight: '600', color: '#333', marginBottom: 12 },
+  filterRow: { flexDirection: 'row' },
+  filterField: { flex: 1, marginRight: 8 },
+  filterLabel: { fontSize: 12, color: '#666', marginBottom: 4 },
+  filterInput: { fontSize: 14 },
+  periodSummary: { fontSize: 13, color: '#555', marginTop: 12 },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -174,16 +275,19 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     bottom: 24,
-    right: 24,
+    left: '50%',
+    marginLeft: -36,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: '#4CAF50',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
   },
-  fabText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  fabText: { color: '#fff', fontWeight: '700', fontSize: 18 },
 });

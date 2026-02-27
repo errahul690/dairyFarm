@@ -21,6 +21,7 @@ export const milkService = {
       fixedPrice: transaction.fixedPrice,
       milkSource,
     };
+    if (transaction.buyerId) payload.buyerId = typeof transaction.buyerId === 'string' ? transaction.buyerId : (transaction.buyerId._id || transaction.buyerId).toString();
     if (transaction.paymentType) payload.paymentType = transaction.paymentType;
     if (transaction.amountReceived != null) payload.amountReceived = transaction.amountReceived;
     const response = await apiClient.post('/milk/sale', payload);
@@ -43,6 +44,7 @@ export const milkService = {
       notes: transaction.notes,
       milkSource: transaction.milkSource,
     };
+    if (transaction.sellerId) payload.sellerId = typeof transaction.sellerId === 'string' ? transaction.sellerId : (transaction.sellerId._id || transaction.sellerId).toString();
     if (transaction.paymentType) payload.paymentType = transaction.paymentType;
     if (transaction.amountReceived != null) payload.amountReceived = transaction.amountReceived;
     const response = await apiClient.post('/milk/purchase', payload);
@@ -88,10 +90,12 @@ export const milkService = {
     if (transaction.type === 'sale') {
       payload.buyer = transaction.buyer;
       payload.buyerPhone = transaction.buyerPhone;
+      if (transaction.buyerId) payload.buyerId = typeof transaction.buyerId === 'string' ? transaction.buyerId : (transaction.buyerId._id || transaction.buyerId).toString();
       if (transaction.fixedPrice) payload.fixedPrice = transaction.fixedPrice;
     } else {
       payload.seller = transaction.seller;
       payload.sellerPhone = transaction.sellerPhone;
+      if (transaction.sellerId) payload.sellerId = typeof transaction.sellerId === 'string' ? transaction.sellerId : (transaction.sellerId._id || transaction.sellerId).toString();
     }
     
     if (transaction.paymentType) payload.paymentType = transaction.paymentType;

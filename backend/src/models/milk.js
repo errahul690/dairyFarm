@@ -35,6 +35,12 @@ const MilkTransactionSchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  /** Reference to User (buyer). Prefer this over buyerPhone when linking; name/mobile can change. */
+  buyerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: false
+  },
   seller: {
     type: String,
     required: false,
@@ -44,6 +50,12 @@ const MilkTransactionSchema = new mongoose.Schema({
     type: String,
     required: false,
     trim: true
+  },
+  /** Reference to User (seller). Prefer this over sellerPhone when linking; name/mobile can change. */
+  sellerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: false
   },
   notes: {
     type: String,
@@ -111,6 +123,8 @@ const MilkTransactionSchema = new mongoose.Schema({
   toJSON: {
     transform: function(doc, ret) {
       ret._id = ret._id.toString();
+      if (ret.buyerId) ret.buyerId = ret.buyerId.toString();
+      if (ret.sellerId) ret.sellerId = ret.sellerId.toString();
       if (ret.paymentIds) {
         ret.paymentIds = ret.paymentIds.map(id => id.toString());
       }
@@ -127,21 +141,26 @@ const MilkTransactionSchema = new mongoose.Schema({
 // Indexes for filtering
 MilkTransactionSchema.index({ buyerPhone: 1 });
 MilkTransactionSchema.index({ sellerPhone: 1 });
+MilkTransactionSchema.index({ buyerId: 1 });
+MilkTransactionSchema.index({ sellerId: 1 });
 MilkTransactionSchema.index({ date: -1 });
 MilkTransactionSchema.index({ milkSource: 1 });
 MilkTransactionSchema.index({ paymentStatus: 1 });
 MilkTransactionSchema.index({ requestSource: 1 });
-MilkTransactionSchema.index({ customerId: 1 }); // For linking with User
 
 const MilkTransaction = mongoose.model('MilkTransaction', MilkTransactionSchema);
 
-async function getAllMilkTransactions(mobileNumber, requestSource = null) {
+async function getAllMilkTransactions(mobileNumber, requestSource = null, userId = null) {
   let query = {};
-  if (mobileNumber) {
-    query.$or = [
-      { buyerPhone: mobileNumber },
-      { sellerPhone: mobileNumber }
-    ];
+  if (mobileNumber || userId) {
+    const orConditions = [];
+    if (userId) {
+      orConditions.push({ buyerId: userId }, { sellerId: userId });
+    }
+    if (mobileNumber) {
+      orConditions.push({ buyerPhone: mobileNumber }, { sellerPhone: mobileNumber });
+    }
+    query.$or = orConditions;
   }
   if (requestSource) query.requestSource = requestSource;
 
@@ -188,14 +207,17 @@ async function deleteMilkTransaction(transactionId) {
 
 // Get unpaid milk transactions for a customer (type: sale, buyer)
 async function getUnpaidMilkTransactions(customerMobile, customerId = null) {
+  const buyerMatch = [];
+  if (customerMobile) buyerMatch.push({ buyerPhone: customerMobile.trim() });
+  if (customerId) buyerMatch.push({ buyerId: customerId });
+  if (buyerMatch.length === 0) return [];
   const query = {
     type: 'sale',
-    $or: [
-      { paymentStatus: 'unpaid' },
-      { paymentStatus: 'partial' }
+    $and: [
+      { $or: [{ paymentStatus: 'unpaid' }, { paymentStatus: 'partial' }] },
+      { $or: buyerMatch }
     ]
   };
-  if (customerMobile) query.buyerPhone = customerMobile.trim();
   return await MilkTransaction.find(query).sort({ date: -1 }).limit(100);
 }
 

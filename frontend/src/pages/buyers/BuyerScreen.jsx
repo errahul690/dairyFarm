@@ -124,6 +124,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
         totalAmount,
         buyer: addMilkBuyer.name,
         buyerPhone: addMilkBuyer.phone,
+        buyerId: addMilkBuyer.userId,
         milkSource,
       });
       setShowAddMilkModal(false);
@@ -580,7 +581,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
           </View>
         </View>
         <View style={styles.periodTotalRow}>
-          <Text style={styles.periodTotalLabel}>Total payable (period)</Text>
+          <Text style={styles.periodTotalLabel}>Payment to collect (period)</Text>
           <Text style={styles.periodTotalAmount}>{formatCurrency(periodPendingTotal)}</Text>
         </View>
       </View>
@@ -741,7 +742,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                       )}
                     </View>
                     <View style={styles.pendingRow}>
-                      <Text style={styles.pendingLabel}>Balance: </Text>
+                      <Text style={styles.pendingLabel}>To collect: </Text>
                       <Text
                         style={[
                           styles.pendingAmount,
@@ -750,7 +751,7 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                         ]}
                       >
                         {(buyer.pendingBalance || 0) > 0
-                          ? `${formatCurrency(buyer.pendingBalance)} pending`
+                          ? `${formatCurrency(buyer.pendingBalance)} to collect`
                           : (buyer.pendingBalance || 0) < 0
                             ? `${formatCurrency(-buyer.pendingBalance)} advance`
                             : 'Settled'}

@@ -32,8 +32,10 @@ const milkTxSchema = z.object({
   totalAmount: z.number().nonnegative(),
   buyer: z.string().optional(),
   buyerPhone: z.string().optional(),
+  buyerId: z.string().optional(),
   seller: z.string().optional(),
   sellerPhone: z.string().optional(),
+  sellerId: z.string().optional(),
   notes: z.string().optional(),
   fixedPrice: z.number().nonnegative().optional(),
   paymentType: z.enum(["cash", "credit"]).optional(),
@@ -43,17 +45,16 @@ const milkTxSchema = z.object({
 
 const listMilkTransactions = async (req, res) => {
   try {
-    // If user is Consumer (role 2), filter by their mobile number
     const user = req.user;
     let mobileNumber;
-    
+    let userId;
+
     if (user && user.role === 2) {
-      // Consumer can only see their own transactions
-      // Normalize mobile number (trim whitespace) for consistent matching
       mobileNumber = user.mobile?.trim();
+      userId = user.userId || user._id;
     }
-    
-    const transactions = await getAllMilkTransactions(mobileNumber);
+
+    const transactions = await getAllMilkTransactions(mobileNumber, null, userId);
     return res.json(transactions);
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch milk transactions" });
@@ -85,6 +86,11 @@ const createMilkSale = async (req, res) => {
       sellerPhone: raw.sellerPhone?.trim() || undefined,
       milkSource,
     };
+    if (raw.buyerId) normalizedData.buyerId = raw.buyerId;
+    else if (normalizedData.buyerPhone) {
+      const buyerUser = await findUserByMobile(normalizedData.buyerPhone);
+      if (buyerUser) normalizedData.buyerId = buyerUser._id;
+    }
     const requestSource = req.user?.role === 2 ? "buyer_app" : "admin";
     const tx = await addMilkTransaction({ type: "sale", requestSource, ...normalizedData });
 
@@ -188,6 +194,7 @@ const createQuickSale = async (req, res) => {
             totalAmount,
             buyer: buyerName,
             buyerPhone: buyerMobile,
+            buyerId: user._id,
             paymentType: "credit",
             notes: "Quick sale",
             milkSource: src,
@@ -228,6 +235,7 @@ const createQuickSale = async (req, res) => {
       totalAmount,
       buyer: buyerName,
       buyerPhone: buyerMobile,
+      buyerId: user._id,
       paymentType: "credit",
       notes: "Quick sale",
       milkSource,
@@ -243,14 +251,19 @@ const createQuickSale = async (req, res) => {
 const createMilkPurchase = async (req, res) => {
   const parsed = milkTxSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  
+
   try {
-    // Normalize phone numbers (trim whitespace)
+    const raw = parsed.data;
     const normalizedData = {
-      ...parsed.data,
-      buyerPhone: parsed.data.buyerPhone?.trim() || undefined,
-      sellerPhone: parsed.data.sellerPhone?.trim() || undefined,
+      ...raw,
+      buyerPhone: raw.buyerPhone?.trim() || undefined,
+      sellerPhone: raw.sellerPhone?.trim() || undefined,
     };
+    if (raw.sellerId) normalizedData.sellerId = raw.sellerId;
+    else if (normalizedData.sellerPhone) {
+      const sellerUser = await findUserByMobile(normalizedData.sellerPhone);
+      if (sellerUser) normalizedData.sellerId = sellerUser._id;
+    }
     const tx = await addMilkTransaction({ type: "purchase", ...normalizedData });
     return res.status(201).json(tx);
   } catch (error) {
@@ -295,10 +308,13 @@ const updateMilkTransaction = async (req, res) => {
     const user = req.user;
     if (user && user.role === 2) {
       const userMobile = user.mobile?.trim();
-      const isOwner = 
+      const userId = user._id || user.userId;
+      const isOwner =
         (existingTx.buyerPhone?.trim() === userMobile) ||
-        (existingTx.sellerPhone?.trim() === userMobile);
-      
+        (existingTx.sellerPhone?.trim() === userMobile) ||
+        (existingTx.buyerId && existingTx.buyerId.toString() === (userId && userId.toString())) ||
+        (existingTx.sellerId && existingTx.sellerId.toString() === (userId && userId.toString()));
+
       if (!isOwner) {
         return res.status(403).json({ error: "You can only update your own transactions" });
       }
@@ -342,10 +358,13 @@ const deleteMilkTransactionRecord = async (req, res) => {
     const user = req.user;
     if (user && user.role === 2) {
       const userMobile = user.mobile?.trim();
-      const isOwner = 
+      const userId = user._id || user.userId;
+      const isOwner =
         (existingTx.buyerPhone?.trim() === userMobile) ||
-        (existingTx.sellerPhone?.trim() === userMobile);
-      
+        (existingTx.sellerPhone?.trim() === userMobile) ||
+        (existingTx.buyerId && existingTx.buyerId.toString() === (userId && userId.toString())) ||
+        (existingTx.sellerId && existingTx.sellerId.toString() === (userId && userId.toString()));
+
       if (!isOwner) {
         return res.status(403).json({ error: "You can only delete your own transactions" });
       }

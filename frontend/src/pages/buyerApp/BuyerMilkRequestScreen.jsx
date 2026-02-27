@@ -1,14 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import { authService } from '../../services/auth/authService';
 import { milkService } from '../../services/milk/milkService';
+import { paymentService } from '../../services/payments/paymentService';
 import { MILK_SOURCE_TYPES } from '../../constants';
 
 export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
   const [user, setUser] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  const [payments, setPayments] = useState([]);
   const [milkSource, setMilkSource] = useState('cow');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
@@ -17,6 +20,20 @@ export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
   useEffect(() => {
     authService.getCurrentUser().then(setUser);
   }, []);
+
+  useEffect(() => {
+    milkService.getTransactions().then((data) => {
+      const sales = (Array.isArray(data) ? data : []).filter((t) => t.type === 'sale');
+      setTransactions(sales);
+    }).catch(() => setTransactions([]));
+    paymentService.getPayments().then((data) => setPayments(Array.isArray(data) ? data : [])).catch(() => setPayments([]));
+  }, []);
+
+  const pendingAmount = useMemo(() => {
+    const milk = transactions.reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0);
+    const paid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    return Math.max(0, milk - paid);
+  }, [transactions, payments]);
 
   const handleSubmit = async () => {
     const q = parseFloat(quantity);
@@ -40,6 +57,7 @@ export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
         totalAmount,
         buyer: user.name || 'Buyer',
         buyerPhone: String(user.mobile).trim(),
+        buyerId: user._id || user.id,
         milkSource: milkSource || 'cow',
         notes: notes.trim() || undefined,
       });
@@ -63,6 +81,7 @@ export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
         onNavigate={onNavigate}
         isAuthenticated={true}
         onLogout={onLogout}
+        pendingAmount={pendingAmount > 0 ? pendingAmount : undefined}
       />
       <ScrollView style={styles.content}>
         <Text style={styles.instruction}>

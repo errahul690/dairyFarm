@@ -12,8 +12,14 @@ import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import { buyerService } from '../../services/buyers/buyerService';
 import * as deliveryOverrideService from '../../services/deliveryOverride/deliveryOverrideService';
 import { formatCurrency } from '../../utils/currencyUtils';
+import { MILK_SOURCE_TYPES } from '../../constants';
 
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function getMilkSourceLabel(value) {
+  const found = MILK_SOURCE_TYPES.find((t) => t.value === (value || 'cow'));
+  return found ? found.label : (value || 'Cow');
+}
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
@@ -74,6 +80,18 @@ function getDateTabLabel(dateStr) {
 const TOTAL_DAYS = 31;
 const DAYS_BACK = 7;
 
+/** Date tabs with today first, then future dates, then past dates. */
+function buildDateTabs() {
+  const list = [];
+  for (let i = 0; i < TOTAL_DAYS; i++) {
+    list.push(getDateTabLabel(getDateStrForOffset(i)));
+  }
+  for (let i = -1; i >= -DAYS_BACK; i--) {
+    list.push(getDateTabLabel(getDateStrForOffset(i)));
+  }
+  return list;
+}
+
 export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
   const [buyers, setBuyers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,13 +100,7 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
   const [selectedDate, setSelectedDate] = useState(getTodayDateStr());
   const dateScrollRef = useRef(null);
 
-  const dateTabs = useMemo(() => {
-    const list = [];
-    for (let i = -DAYS_BACK; i < TOTAL_DAYS - DAYS_BACK; i++) {
-      list.push(getDateTabLabel(getDateStrForOffset(i)));
-    }
-    return list;
-  }, []);
+  const dateTabs = useMemo(() => buildDateTabs(), []);
 
   const loadData = async () => {
     try {
@@ -142,11 +154,22 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
         const cancelled = cancelledMobiles.has(mobile);
         const added = addedMobiles.has(mobile);
         const show = (normallyOn && !cancelled) || added;
+        const hasDeliveryItems = Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0;
+        const dailyQuantity = hasDeliveryItems
+          ? b.deliveryItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
+          : (Number(b.quantity) || 0);
+        const rate = hasDeliveryItems && b.deliveryItems[0] ? Number(b.deliveryItems[0].rate) || 0 : (Number(b.rate) || 0);
+        const totalAmount = hasDeliveryItems
+          ? b.deliveryItems.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.rate) || 0), 0)
+          : dailyQuantity * (Number(b.rate) || 0);
         return {
           ...b,
           mobile,
-          rate: Number(b.rate) || 0,
-          dailyQuantity: Number(b.quantity) || 0,
+          rate,
+          dailyQuantity,
+          totalAmount,
+          deliveryItems: b.deliveryItems,
+          milkSource: b.milkSource || 'cow',
           normallyOn,
           isOverrideAdded: added,
           show,
@@ -164,11 +187,18 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
         const mobile = String(b.mobile).trim();
         const normallyOn = isDeliveryDay(b, dateStart);
         const cancelled = cancelledMobiles.has(mobile);
+        const hasDeliveryItems = Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0;
+        const dailyQuantity = hasDeliveryItems
+          ? b.deliveryItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
+          : (Number(b.quantity) || 0);
+        const rate = hasDeliveryItems && b.deliveryItems[0] ? Number(b.deliveryItems[0].rate) || 0 : (Number(b.rate) || 0);
         return {
           ...b,
           mobile,
-          rate: Number(b.rate) || 0,
-          dailyQuantity: Number(b.quantity) || 0,
+          rate,
+          dailyQuantity,
+          deliveryItems: b.deliveryItems,
+          milkSource: b.milkSource || 'cow',
           normallyOn,
           isCancelled: normallyOn && cancelled,
         };
@@ -305,12 +335,22 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
                     {buyersOnDate.map((b) => (
                       <View key={b.mobile} style={[styles.card, b.isOverrideAdded && styles.cardAdded]}>
                         <Text style={styles.buyerName}>{b.name}</Text>
-                        <Text style={styles.detail}>
-                          {b.dailyQuantity.toFixed(2)} L @ {formatCurrency(b.rate)}/L
-                          {b.isOverrideAdded && ' (added for this date)'}
-                        </Text>
+                        {Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0 ? (
+                          b.deliveryItems.map((it, idx) => (
+                            <Text key={idx} style={styles.detail}>
+                              {getMilkSourceLabel(it.milkSource)}: {Number(it.quantity || 0).toFixed(2)} L @ {formatCurrency(Number(it.rate) || 0)}/L
+                            </Text>
+                          ))
+                        ) : (
+                          <Text style={styles.detail}>
+                            {getMilkSourceLabel(b.milkSource)}: {b.dailyQuantity.toFixed(2)} L @ {formatCurrency(b.rate)}/L
+                          </Text>
+                        )}
+                        {b.isOverrideAdded && (
+                          <Text style={styles.detail}>(added for this date)</Text>
+                        )}
                         <Text style={styles.amountLine}>
-                          {formatCurrency(b.dailyQuantity * b.rate)} total
+                          {formatCurrency(b.totalAmount != null ? b.totalAmount : b.dailyQuantity * b.rate)} total
                         </Text>
                         <TouchableOpacity
                           style={styles.overrideBtn}
@@ -331,10 +371,19 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
                     {buyersNotOnDate.map((b) => (
                       <View key={b.mobile} style={styles.cardMuted}>
                         <Text style={styles.buyerName}>{b.name}</Text>
-                        <Text style={styles.detail}>
-                          {b.dailyQuantity.toFixed(2)} L @ {formatCurrency(b.rate)}/L
-                          {b.isCancelled && ' (cancelled for this date)'}
-                        </Text>
+                        {Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0 ? (
+                          b.deliveryItems.map((it, idx) => (
+                            <Text key={idx} style={styles.detail}>
+                              {getMilkSourceLabel(it.milkSource)}: {Number(it.quantity || 0).toFixed(2)} L @ {formatCurrency(Number(it.rate) || 0)}/L
+                              {b.isCancelled && idx === 0 && ' (cancelled for this date)'}
+                            </Text>
+                          ))
+                        ) : (
+                          <Text style={styles.detail}>
+                            {getMilkSourceLabel(b.milkSource)}: {b.dailyQuantity.toFixed(2)} L @ {formatCurrency(b.rate)}/L
+                            {b.isCancelled && ' (cancelled for this date)'}
+                          </Text>
+                        )}
                         <TouchableOpacity
                           style={b.isCancelled ? styles.overrideBtnUndo : styles.overrideBtnAdd}
                           onPress={() => (b.isCancelled ? handleRemoveCancel(b.mobile) : handleAddForDate(b.mobile))}

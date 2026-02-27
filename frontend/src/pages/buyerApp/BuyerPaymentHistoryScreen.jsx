@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
+import { milkService } from '../../services/milk/milkService';
 import { paymentService } from '../../services/payments/paymentService';
 import { formatCurrency } from '../../utils/currencyUtils';
 
@@ -19,6 +20,7 @@ const formatDate = (d) => {
 
 export default function BuyerPaymentHistoryScreen({ onNavigate, onLogout }) {
   const [payments, setPayments] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,14 +30,25 @@ export default function BuyerPaymentHistoryScreen({ onNavigate, onLogout }) {
   const loadData = async () => {
     try {
       setLoading(true);
-      const data = await paymentService.getPayments();
-      setPayments(Array.isArray(data) ? data.sort((a, b) => new Date(b.paymentDate) - new Date(a.paymentDate)) : []);
+      const [paymentData, txData] = await Promise.all([
+        paymentService.getPayments(),
+        milkService.getTransactions().catch(() => []),
+      ]);
+      setPayments(Array.isArray(paymentData) ? paymentData.sort((a, b) => new Date(b.paymentDate) - new Date(a.paymentDate)) : []);
+      const sales = (Array.isArray(txData) ? txData : []).filter((t) => t.type === 'sale');
+      setTransactions(sales);
     } catch (error) {
       Alert.alert('Error', 'Failed to load payments.');
     } finally {
       setLoading(false);
     }
   };
+
+  const pendingAmount = useMemo(() => {
+    const milk = transactions.reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0);
+    const paid = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    return Math.max(0, milk - paid);
+  }, [transactions, payments]);
 
   return (
     <View style={styles.container}>
@@ -45,6 +58,7 @@ export default function BuyerPaymentHistoryScreen({ onNavigate, onLogout }) {
         onNavigate={onNavigate}
         isAuthenticated={true}
         onLogout={onLogout}
+        pendingAmount={pendingAmount > 0 ? pendingAmount : undefined}
       />
       <ScrollView style={styles.content}>
         {loading ? (

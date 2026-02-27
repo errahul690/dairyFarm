@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { authService } from '../../services/auth/authService';
 import { notificationService } from '../../services/notifications/notificationService';
+import { formatCurrency } from '../../utils/currencyUtils';
 
 const { width } = Dimensions.get('window');
 
@@ -27,7 +28,7 @@ const baseMenuItems = [
   { id: 7, title: 'Buyer', icon: '👥' },
   { id: 8, title: 'Seller', icon: '🏪' },
   { id: 11, title: 'Payments', icon: '💵' },
-  { id: 12, title: 'Pending Payments', icon: '📋' },
+  { id: 12, title: 'Payments to collect', icon: '📋' },
   { id: 14, title: 'Settings', icon: '⚙️' },
   { id: 13, title: 'Notifications', icon: '🔔' },
 ];
@@ -38,11 +39,10 @@ const buyerMenuItems = [
   { id: 27, title: 'My Schedule', icon: '📅' },
   { id: 23, title: 'Transaction History', icon: '📜' },
   { id: 24, title: 'Payment History', icon: '💵' },
-  { id: 25, title: 'Pending Payment', icon: '📋' },
-  { id: 26, title: 'Pay', icon: '💳' },
+  { id: 25, title: 'Pending Payment', icon: '💳' },
 ];
 
-export default function HeaderWithMenu({ title, subtitle, onNavigate, isAuthenticated = false, onLogout }) {
+export default function HeaderWithMenu({ title, subtitle, onNavigate, isAuthenticated = false, onLogout, pendingAmount }) {
   const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
@@ -121,6 +121,9 @@ export default function HeaderWithMenu({ title, subtitle, onNavigate, isAuthenti
         <View style={styles.headerTextContainer}>
           <Text style={styles.title}>{title}</Text>
           {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+          {isBuyer && pendingAmount != null && pendingAmount > 0 && (
+            <Text style={styles.pendingBadge}>Pending: {formatCurrency(pendingAmount)}</Text>
+          )}
         </View>
         {isAdmin && (
           <>
@@ -305,6 +308,17 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: '#E8F5E9',
+  },
+  pendingBadge: {
+    fontSize: 14,
+    color: '#FFF',
+    fontWeight: '700',
+    marginTop: 4,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
   },
   drawerOverlay: {
     flex: 1,

@@ -12,6 +12,12 @@ export const buyerService = {
     return response;
   },
 
+  /** Buyer updates own quantity/deliveryItems (role 2). PATCH /buyers/me */
+  updateMyProfile: async (payload) => {
+    const response = await apiClient.patch('/buyers/me', payload);
+    return response;
+  },
+
   /** @param {boolean} [activeOnly] - if true, only active buyers (for Sale / Quick Sale) */
   getBuyers: async (activeOnly = false) => {
     try {

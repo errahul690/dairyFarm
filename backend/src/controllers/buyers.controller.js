@@ -1,4 +1,4 @@
-const { getAllBuyers, getBuyerById, updateBuyerById, findBuyerByUserId, addBuyer } = require("../models/buyers");
+const { getAllBuyers, getBuyerById, updateBuyerById, findBuyerByUserId, addBuyer, updateBuyer: updateBuyerModel } = require("../models/buyers");
 const { findSellerByUserId, getSellerById } = require("../models/sellers");
 const { User } = require("../models/users");
 
@@ -78,6 +78,69 @@ const getMyBuyerProfile = async (req, res) => {
   } catch (error) {
     console.error("[buyers] getMyBuyerProfile:", error);
     return res.status(500).json({ error: "Failed to fetch profile", message: error.message });
+  }
+};
+
+/**
+ * Buyer updates own profile (quantity / deliveryItems only). Role 2 only.
+ * PATCH /buyers/me
+ */
+const updateMyBuyerProfile = async (req, res) => {
+  try {
+    if (req.user?.role !== 2) {
+      return res.status(403).json({ error: "Only buyers can update their own schedule quantity" });
+    }
+    const userId = req.user?.userId || req.user?._id;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const buyer = await findBuyerByUserId(userId);
+    if (!buyer) return res.status(404).json({ error: "Buyer profile not found" });
+    const updates = req.body || {};
+    const allowed = ["quantity", "deliveryItems"];
+    const filtered = {};
+    for (const key of allowed) {
+      if (updates[key] !== undefined) filtered[key] = updates[key];
+    }
+    if (filtered.quantity != null) {
+      const q = Number(filtered.quantity);
+      if (!(q >= 0)) return res.status(400).json({ error: "Quantity must be 0 or more" });
+      filtered.quantity = q;
+    }
+    if (Array.isArray(filtered.deliveryItems)) {
+      filtered.deliveryItems = filtered.deliveryItems
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const src = (item.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(String(item.milkSource).toLowerCase()))
+            ? String(item.milkSource).toLowerCase()
+            : "cow";
+          const q = Number(item.quantity);
+          const r = Number(item.rate);
+          if (!(q >= 0)) return null;
+          return { milkSource: src, quantity: q, rate: (r >= 0 ? r : 0) };
+        })
+        .filter(Boolean);
+    }
+    if (Object.keys(filtered).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update. Send quantity or deliveryItems." });
+    }
+    const updated = await updateBuyerModel(userId, filtered);
+    const user = await User.findById(updated.userId);
+    return res.json({
+      _id: updated._id,
+      userId: updated.userId,
+      name: updated.name || user?.name,
+      mobile: user?.mobile,
+      quantity: updated.quantity,
+      rate: updated.rate,
+      milkSource: updated.milkSource || 'cow',
+      deliveryItems: updated.deliveryItems,
+      deliveryDays: updated.deliveryDays,
+      deliveryCycleDays: updated.deliveryCycleDays,
+      deliveryCycleStartDate: updated.deliveryCycleStartDate,
+      updatedAt: updated.updatedAt,
+    });
+  } catch (error) {
+    console.error("[buyers] updateMyBuyerProfile:", error);
+    return res.status(500).json({ error: "Failed to update", message: error.message });
   }
 };
 
@@ -187,6 +250,7 @@ const createBuyerFromSeller = async (req, res) => {
 module.exports = {
   listBuyers,
   getMyBuyerProfile,
+  updateMyBuyerProfile,
   updateBuyer,
   createBuyerFromSeller,
 };
