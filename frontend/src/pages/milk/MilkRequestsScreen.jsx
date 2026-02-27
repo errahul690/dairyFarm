@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -25,6 +25,32 @@ export default function MilkRequestsScreen({ onNavigate, onLogout }) {
   const [editingRequest, setEditingRequest] = useState(null);
   const [editPricePerLiter, setEditPricePerLiter] = useState('');
   const [savingPrice, setSavingPrice] = useState(false);
+
+  const [requestDateFilter, setRequestDateFilter] = useState('all');
+  const [requestDateFrom, setRequestDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().split('T')[0];
+  });
+  const [requestDateTo, setRequestDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+
+  const filteredRequests = useMemo(() => {
+    if (requestDateFilter !== 'date' || !requestDateFrom || !requestDateTo) return requests;
+    const from = new Date(requestDateFrom);
+    const to = new Date(requestDateTo);
+    from.setHours(0, 0, 0, 0);
+    to.setHours(23, 59, 59, 999);
+    if (isNaN(from.getTime()) || isNaN(to.getTime()) || from > to) return requests;
+    return requests.filter((req) => {
+      const d = req.date instanceof Date ? req.date : new Date(req.date);
+      return d >= from && d <= to;
+    });
+  }, [requests, requestDateFilter, requestDateFrom, requestDateTo]);
+
+  const periodTotal = useMemo(
+    () => filteredRequests.reduce((sum, r) => sum + (Number(r.totalAmount) || 0), 0),
+    [filteredRequests]
+  );
 
   const loadRequests = async () => {
     try {
@@ -98,6 +124,40 @@ export default function MilkRequestsScreen({ onNavigate, onLogout }) {
         onLogout={onLogout}
         isAuthenticated={true}
       />
+      <View style={styles.dateFilterStrip}>
+        <View style={styles.dateFilterRow}>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, requestDateFilter === 'all' && styles.dateFilterTabActive]}
+            onPress={() => setRequestDateFilter('all')}
+          >
+            <Text style={[styles.dateFilterTabText, requestDateFilter === 'all' && styles.dateFilterTabTextActive]}>All</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, requestDateFilter === 'date' && styles.dateFilterTabActive]}
+            onPress={() => setRequestDateFilter('date')}
+          >
+            <Text style={[styles.dateFilterTabText, requestDateFilter === 'date' && styles.dateFilterTabTextActive]}>Date</Text>
+          </TouchableOpacity>
+        </View>
+        {requestDateFilter === 'date' && (
+          <View style={styles.dateFilterInputs}>
+            <View style={styles.dateFilterField}>
+              <Text style={styles.dateFilterLabel}>From</Text>
+              <Input value={requestDateFrom} onChangeText={setRequestDateFrom} placeholder="YYYY-MM-DD" style={styles.dateFilterInput} />
+            </View>
+            <View style={styles.dateFilterField}>
+              <Text style={styles.dateFilterLabel}>To</Text>
+              <Input value={requestDateTo} onChangeText={setRequestDateTo} placeholder="YYYY-MM-DD" style={styles.dateFilterInput} />
+            </View>
+          </View>
+        )}
+        {requestDateFilter === 'date' && (
+          <View style={styles.periodTotalRow}>
+            <Text style={styles.periodTotalLabel}>In period:</Text>
+            <Text style={styles.periodTotalValue}>{filteredRequests.length} request{filteredRequests.length !== 1 ? 's' : ''} · {formatCurrency(periodTotal)}</Text>
+          </View>
+        )}
+      </View>
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color="#4CAF50" />
@@ -111,13 +171,15 @@ export default function MilkRequestsScreen({ onNavigate, onLogout }) {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#4CAF50']} />
           }
         >
-          {requests.length === 0 ? (
+          {filteredRequests.length === 0 ? (
             <View style={styles.empty}>
               <Text style={styles.emptyIcon}>🥛</Text>
-              <Text style={styles.emptyText}>No milk requests from buyers yet.</Text>
+              <Text style={styles.emptyText}>
+                {requestDateFilter === 'date' ? 'No milk requests in this date range.' : 'No milk requests from buyers yet.'}
+              </Text>
             </View>
           ) : (
-            requests.map((req) => (
+            filteredRequests.map((req) => (
               <View key={req._id} style={styles.card}>
                 <View style={styles.cardRow}>
                   <Text style={styles.buyerName}>{req.buyer || 'Buyer'}</Text>
@@ -206,6 +268,31 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f4f7f6' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   loadingText: { marginTop: 12, fontSize: 14, color: '#556d73' },
+  dateFilterStrip: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  dateFilterRow: { flexDirection: 'row', marginBottom: 0 },
+  dateFilterTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginRight: 8,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+  },
+  dateFilterTabActive: { backgroundColor: '#1f6b5b' },
+  dateFilterTabText: { fontSize: 14, color: '#666', fontWeight: '600' },
+  dateFilterTabTextActive: { color: '#fff' },
+  dateFilterInputs: { flexDirection: 'row', gap: 12, marginTop: 10 },
+  dateFilterField: { flex: 1 },
+  dateFilterLabel: { fontSize: 12, color: '#666', marginBottom: 4 },
+  dateFilterInput: { marginBottom: 0 },
+  periodTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#eee' },
+  periodTotalLabel: { fontSize: 14, color: '#556d73', fontWeight: '600' },
+  periodTotalValue: { fontSize: 15, fontWeight: '700', color: '#1f6b5b' },
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: 24 },
   empty: { alignItems: 'center', paddingVertical: 48 },

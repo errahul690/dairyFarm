@@ -46,6 +46,13 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [useDateFilter, setUseDateFilter] = useState(false);
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return d.toISOString().split('T')[0];
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     quantity: '',
@@ -530,7 +537,23 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
     );
   };
 
-  const filteredTransactions = transactions.filter((t) => t.type === transactionType);
+  const filteredTransactions = useMemo(() => {
+    let list = transactions.filter((t) => t.type === transactionType);
+    if (useDateFilter && dateFrom && dateTo) {
+      const from = new Date(dateFrom);
+      const to = new Date(dateTo);
+      from.setHours(0, 0, 0, 0);
+      to.setHours(23, 59, 59, 999);
+      if (!isNaN(from.getTime()) && !isNaN(to.getTime()) && from <= to) {
+        list = list.filter((t) => {
+          const d = new Date(t.date);
+          return d >= from && d <= to;
+        });
+      }
+    }
+    return list;
+  }, [transactions, transactionType, useDateFilter, dateFrom, dateTo]);
+
   const totalAmount = filteredTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
   const totalQuantity = filteredTransactions.reduce((sum, t) => sum + t.quantity, 0);
 
@@ -711,8 +734,37 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
           </TouchableOpacity>
         </View>
 
+        <View style={styles.dateFilterStrip}>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, !useDateFilter && styles.dateFilterTabActive]}
+            onPress={() => setUseDateFilter(false)}
+          >
+            <Text style={[styles.dateFilterTabText, !useDateFilter && styles.dateFilterTabTextActive]}>All</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.dateFilterTab, useDateFilter && styles.dateFilterTabActive]}
+            onPress={() => setUseDateFilter(true)}
+          >
+            <Text style={[styles.dateFilterTabText, useDateFilter && styles.dateFilterTabTextActive]}>Date</Text>
+          </TouchableOpacity>
+          {useDateFilter && (
+            <View style={styles.dateFilterInputRow}>
+              <View style={styles.dateFilterField}>
+                <Text style={styles.dateFilterLabel}>From</Text>
+                <Input value={dateFrom} onChangeText={setDateFrom} placeholder="YYYY-MM-DD" style={styles.dateFilterInput} />
+              </View>
+              <View style={styles.dateFilterField}>
+                <Text style={styles.dateFilterLabel}>To</Text>
+                <Input value={dateTo} onChangeText={setDateTo} placeholder="YYYY-MM-DD" style={styles.dateFilterInput} />
+              </View>
+            </View>
+          )}
+        </View>
+
         <View style={[styles.summaryCard, transactionType === 'sale' ? styles.summaryCardSale : styles.summaryCardPurchase]}>
-          <Text style={styles.summaryTitle} numberOfLines={1}>Total {transactionType === 'sale' ? 'Sales' : 'Purchases'}</Text>
+          <Text style={styles.summaryTitle} numberOfLines={1}>
+            {useDateFilter ? `Total ${transactionType === 'sale' ? 'Sales' : 'Purchases'} (period)` : `Total ${transactionType === 'sale' ? 'Sales' : 'Purchases'}`}
+          </Text>
           <Text style={styles.summaryValue} numberOfLines={1}>{formatCurrency(totalAmount)}</Text>
           <Text style={styles.summarySubtext} numberOfLines={1}>{totalQuantity.toFixed(2)} Liters</Text>
           <Text style={styles.summarySubtext} numberOfLines={1}>{filteredTransactions.length} Transactions</Text>
@@ -1743,6 +1795,49 @@ const styles = StyleSheet.create({
   },
   toggleTextActive: {
     color: '#FFFFFF',
+  },
+  dateFilterStrip: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  dateFilterTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginRight: 8,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    alignSelf: 'flex-start',
+  },
+  dateFilterTabActive: {
+    backgroundColor: '#2196F3',
+  },
+  dateFilterTabText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '600',
+  },
+  dateFilterTabTextActive: {
+    color: '#fff',
+  },
+  dateFilterInputRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 10,
+  },
+  dateFilterField: {
+    flex: 1,
+  },
+  dateFilterLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+  },
+  dateFilterInput: {
+    marginBottom: 0,
   },
   summaryCard: {
     borderRadius: 10,
