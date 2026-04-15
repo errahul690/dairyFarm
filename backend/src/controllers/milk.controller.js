@@ -54,7 +54,47 @@ const listMilkTransactions = async (req, res) => {
       userId = user.userId || user._id;
     }
 
-    const transactions = await getAllMilkTransactions(mobileNumber, null, userId);
+    const parseDateParam = (value) => {
+      if (!value) return null;
+      const v = String(value).trim();
+      if (!v) return null;
+      const d = new Date(v);
+      if (!isNaN(d.getTime())) return d;
+      return null;
+    };
+
+    const parseEndExclusive = (value) => {
+      if (!value) return null;
+      const v = String(value).trim();
+      if (!v) return null;
+      // If it's YYYY-MM-DD, treat it as inclusive end day by adding 1 day (exclusive end)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+        const [y, m, d] = v.split("-").map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0, 0));
+        return isNaN(dt.getTime()) ? null : dt;
+      }
+      const dt = new Date(v);
+      return isNaN(dt.getTime()) ? null : dt;
+    };
+
+    const from = parseDateParam(req.query.from);
+    const to = parseEndExclusive(req.query.to);
+    const type = req.query.type ? String(req.query.type).trim().toLowerCase() : null;
+
+    const requestedLimit = req.query.limit != null ? Number(req.query.limit) : null;
+    const requestedSkip = req.query.skip != null ? Number(req.query.skip) : 0;
+    // Sensible defaults: buyers get smaller pages; admins can request bigger.
+    const defaultLimit = user && user.role === 2 ? 200 : 500;
+    const limit = Number.isFinite(requestedLimit) ? requestedLimit : defaultLimit;
+    const skip = Number.isFinite(requestedSkip) ? requestedSkip : 0;
+
+    const transactions = await getAllMilkTransactions(mobileNumber, null, userId, {
+      from,
+      to,
+      type,
+      limit,
+      skip,
+    });
     return res.json(transactions);
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch milk transactions" });

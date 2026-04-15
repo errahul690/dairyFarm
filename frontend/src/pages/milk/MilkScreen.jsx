@@ -65,12 +65,25 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
     milkSource: 'cow',
   });
 
-  // Load transactions, buyers, and sellers on mount
+  // Load transactions on mount (buyers/sellers are loaded lazily based on transactionType)
   useEffect(() => {
     loadTransactions();
-    loadBuyers();
-    loadSellers();
   }, []);
+
+  // Lazy-load only what the current tab needs
+  useEffect(() => {
+    if (transactionType === 'sale') {
+      if (!buyersLoading && buyers.length === 0) {
+        loadBuyers();
+      }
+      return;
+    }
+    if (transactionType === 'purchase') {
+      if (!sellersLoading && sellers.length === 0) {
+        loadSellers();
+      }
+    }
+  }, [transactionType]); // intentionally not depending on buyers/sellers arrays to avoid extra fetches
 
   // Quick-add sale from Dashboard FAB
   useEffect(() => {
@@ -84,14 +97,10 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
 
   const loadBuyers = async () => {
     try {
-      console.log('[MilkScreen] Starting to load buyers...');
       // Load buyers from buyers table (active only for sale list)
       const data = await buyerService.getBuyers(true);
-      console.log('[MilkScreen] Received buyers data:', data);
-      console.log('[MilkScreen] Buyers count:', data?.length || 0);
       
       const buyersList = Array.isArray(data) ? data : [];
-      console.log('[MilkScreen] Setting buyers to state:', buyersList.length);
       setBuyers(buyersList);
       return buyersList;
     } catch (error) {
@@ -105,14 +114,10 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
 
   const loadSellers = async () => {
     try {
-      console.log('[MilkScreen] Starting to load sellers...');
       // Load sellers from sellers table
       const data = await sellerService.getSellers();
-      console.log('[MilkScreen] Received sellers data:', data);
-      console.log('[MilkScreen] Sellers count:', data?.length || 0);
       
       const sellersList = Array.isArray(data) ? data : [];
-      console.log('[MilkScreen] Setting sellers to state:', sellersList.length);
       setSellers(sellersList);
       return sellersList;
     } catch (error) {
@@ -127,11 +132,16 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
   const loadTransactions = async () => {
     try {
       setLoading(true);
-      const data = await milkService.getTransactions();
-      setTransactions(data);
+      // Default: fetch recent transactions only (reduces backend + render load).
+      const now = new Date();
+      const from = new Date(now);
+      from.setDate(from.getDate() - 60);
+      const data = await milkService.getTransactions(from, null, 800);
+      setTransactions(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Failed to load transactions:', error);
       Alert.alert('Error', 'Failed to load transactions. Please try again.');
+      setTransactions([]);
     } finally {
       setLoading(false);
     }
@@ -192,8 +202,10 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
       }
     });
     
-    // Convert map to array and sort by name
-    return Array.from(contactMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    // Convert map to array and sort by name (defensive against missing names)
+    return Array.from(contactMap.values()).sort((a, b) =>
+      String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'en')
+    );
   }, [buyers, sellers, transactions, transactionType]);
 
   // Filtered buyers based on search query
@@ -565,8 +577,20 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
     return list;
   }, [transactions, transactionType, useDateFilter, dateFrom, dateTo]);
 
-  const totalAmount = filteredTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
-  const totalQuantity = filteredTransactions.reduce((sum, t) => sum + t.quantity, 0);
+  // Render optimization: show recent days first, "load more" if many transactions
+  const [visibleDayGroups, setVisibleDayGroups] = useState(10);
+  useEffect(() => {
+    setVisibleDayGroups(10);
+  }, [transactionType, useDateFilter, dateFrom, dateTo]);
+
+  const totalAmount = useMemo(
+    () => filteredTransactions.reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0),
+    [filteredTransactions]
+  );
+  const totalQuantity = useMemo(
+    () => filteredTransactions.reduce((sum, t) => sum + (Number(t.quantity) || 0), 0),
+    [filteredTransactions]
+  );
 
   // Helper function to get unique contact identifier (name + phone)
   const getContactKey = (transaction) => {
@@ -583,7 +607,7 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
   };
 
   // Monthly sales summary by milk source (only for sales)
-  const getMonthlySalesByMilkSource = () => {
+  const monthlySalesByMilkSource = useMemo(() => {
     if (transactionType !== 'sale') return {};
 
     const [year, month] = selectedMonth.split('-').map(Number);
@@ -593,25 +617,30 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
       return tDate.getFullYear() === year && tDate.getMonth() + 1 === month;
     });
 
-    const sourceSummary = { cow: { quantity: 0, totalAmount: 0 }, buffalo: { quantity: 0, totalAmount: 0 }, sheep: { quantity: 0, totalAmount: 0 }, goat: { quantity: 0, totalAmount: 0 } };
+    const sourceSummary = {
+      cow: { quantity: 0, totalAmount: 0 },
+      buffalo: { quantity: 0, totalAmount: 0 },
+      sheep: { quantity: 0, totalAmount: 0 },
+      goat: { quantity: 0, totalAmount: 0 },
+    };
 
     monthlySales.forEach((sale) => {
       const src = sale.milkSource || 'cow';
+      const qty = Number(sale.quantity) || 0;
+      const amt = Number(sale.totalAmount) || 0;
       if (sourceSummary[src]) {
-        sourceSummary[src].quantity += sale.quantity;
-        sourceSummary[src].totalAmount += sale.totalAmount;
+        sourceSummary[src].quantity += qty;
+        sourceSummary[src].totalAmount += amt;
       } else {
-        sourceSummary[src] = { quantity: sale.quantity, totalAmount: sale.totalAmount };
+        sourceSummary[src] = { quantity: qty, totalAmount: amt };
       }
     });
 
     return sourceSummary;
-  };
-
-  const monthlySalesByMilkSource = getMonthlySalesByMilkSource();
+  }, [transactionType, selectedMonth, transactions]);
 
   // Monthly sales summary by buyer (only for sales)
-  const getMonthlySalesByBuyer = () => {
+  const monthlySalesByBuyer = useMemo(() => {
     if (transactionType !== 'sale') return {};
 
     const [year, month] = selectedMonth.split('-').map(Number);
@@ -627,18 +656,25 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
       if (sale.buyer) {
         const key = getContactKey(sale);
         if (!buyerSummary[key]) {
-          buyerSummary[key] = { quantity: 0, totalAmount: 0, name: sale.buyer, phone: sale.buyerPhone };
+          buyerSummary[key] = {
+            quantity: 0,
+            totalAmount: 0,
+            name: sale.buyer,
+            phone: sale.buyerPhone,
+          };
         }
-        buyerSummary[key].quantity += sale.quantity;
-        buyerSummary[key].totalAmount += sale.totalAmount;
+        buyerSummary[key].quantity += Number(sale.quantity) || 0;
+        buyerSummary[key].totalAmount += Number(sale.totalAmount) || 0;
       }
     });
 
     return buyerSummary;
-  };
+  }, [transactionType, selectedMonth, transactions]);
 
-  const monthlySalesByBuyer = getMonthlySalesByBuyer();
-  const monthlyBuyers = Object.keys(monthlySalesByBuyer).sort();
+  const monthlyBuyers = useMemo(
+    () => Object.keys(monthlySalesByBuyer).sort((a, b) => a.localeCompare(b, 'en')),
+    [monthlySalesByBuyer]
+  );
 
   // Get month name in Hindi/English format
   const getMonthDisplayName = (monthYear) => {
@@ -684,7 +720,12 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
       }));
   };
 
-  const dayWiseTransactions = getDayWiseTransactions();
+  const dayWiseTransactions = useMemo(() => getDayWiseTransactions(), [filteredTransactions]);
+  const visibleDayWiseTransactions = useMemo(
+    () => dayWiseTransactions.slice(0, visibleDayGroups),
+    [dayWiseTransactions, visibleDayGroups]
+  );
+  const hasMoreDayGroups = dayWiseTransactions.length > visibleDayGroups;
 
   // Get day-wise summary by contact (buyer for sales, seller for purchases)
   const getDayWiseSummary = (transactions) => {
@@ -1007,7 +1048,7 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
             </Text>
           </View>
         ) : (
-          dayWiseTransactions.map((dayGroup) => {
+          visibleDayWiseTransactions.map((dayGroup) => {
             const daySummary = getDayWiseSummary(dayGroup.transactions);
             const dayTotalQuantity = dayGroup.transactions.reduce(
               (sum, t) => sum + t.quantity,
@@ -1135,6 +1176,18 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
               </View>
             );
           })
+        )}
+
+        {hasMoreDayGroups && (
+          <TouchableOpacity
+            style={styles.loadMoreBtn}
+            onPress={() => setVisibleDayGroups((n) => n + 10)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.loadMoreBtnText}>
+              Load more ({visibleDayGroups}/{dayWiseTransactions.length} days)
+            </Text>
+          </TouchableOpacity>
         )}
       </ScrollView>
 
@@ -1290,13 +1343,11 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
                   </View>
                 ) : (
                   filteredBuyers.map((buyer, index) => {
-                    console.log(`[MilkScreen] Rendering buyer ${index}:`, buyer);
                     return (
                       <TouchableOpacity
                         key={buyer._id || `buyer-${index}`}
                         style={styles.buyerListItem}
                         onPress={() => {
-                          console.log('[MilkScreen] Buyer selected:', buyer);
                           setSelectedBuyer(buyer);
                         }}
                         activeOpacity={0.7}
@@ -1484,13 +1535,11 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
                   </View>
                 ) : (
                   filteredSellers.map((seller, index) => {
-                    console.log(`[MilkScreen] Rendering seller ${index}:`, seller);
                     return (
                       <TouchableOpacity
                         key={seller._id || `seller-${index}`}
                         style={styles.buyerListItem}
                         onPress={() => {
-                          console.log('[MilkScreen] Seller selected:', seller);
                           setSelectedSeller(seller);
                         }}
                         activeOpacity={0.7}
@@ -1946,31 +1995,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-  },
-  transactionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  transactionHeaderLeft: {
-    flex: 1,
-  },
-  transactionTime: {
-    fontSize: 12,
-    color: '#999',
-    marginBottom: 4,
-  },
-  transactionQuantity: {
-    fontSize: 14,
-    color: '#666',
-  },
-  transactionActions: {
-    flexDirection: 'row',
-    gap: 8,
   },
   editButton: {
     backgroundColor: '#2196F3',
@@ -2736,6 +2760,21 @@ const styles = StyleSheet.create({
     color: '#333',
     borderWidth: 1,
     borderColor: '#E0E0E0',
+  },
+  loadMoreBtn: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 6,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  loadMoreBtnText: {
+    fontSize: 14,
+    color: '#2196F3',
+    fontWeight: '700',
   },
 });
 

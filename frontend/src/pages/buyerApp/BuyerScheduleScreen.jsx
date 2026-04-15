@@ -20,6 +20,7 @@ const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+
 function getStartOfDayISTFromString(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   if (!y || !m || !d) return new Date();

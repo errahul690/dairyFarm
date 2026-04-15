@@ -56,8 +56,15 @@ export const milkService = {
     };
   },
 
-  getTransactions: async (startDate, endDate) => {
-    const response = await apiClient.get('/milk');
+  getTransactions: async (startDate = null, endDate = null, limit = null, skip = null, type = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('from', startDate instanceof Date ? startDate.toISOString() : String(startDate));
+    if (endDate) params.append('to', endDate instanceof Date ? endDate.toISOString() : String(endDate));
+    if (limit != null) params.append('limit', String(limit));
+    if (skip != null) params.append('skip', String(skip));
+    if (type) params.append('type', String(type));
+    const qs = params.toString();
+    const response = await apiClient.get(qs ? `/milk?${qs}` : '/milk');
     
     // Convert date strings back to Date objects
     return response.map((tx) => ({

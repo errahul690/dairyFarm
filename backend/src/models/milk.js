@@ -150,7 +150,7 @@ MilkTransactionSchema.index({ requestSource: 1 });
 
 const MilkTransaction = mongoose.model('MilkTransaction', MilkTransactionSchema);
 
-async function getAllMilkTransactions(mobileNumber, requestSource = null, userId = null) {
+async function getAllMilkTransactions(mobileNumber, requestSource = null, userId = null, options = {}) {
   let query = {};
   if (mobileNumber || userId) {
     const orConditions = [];
@@ -164,7 +164,23 @@ async function getAllMilkTransactions(mobileNumber, requestSource = null, userId
   }
   if (requestSource) query.requestSource = requestSource;
 
-  const transactions = await MilkTransaction.find(query).sort({ date: -1 });
+  if (options.type && ["sale", "purchase"].includes(options.type)) {
+    query.type = options.type;
+  }
+  if (options.from || options.to) {
+    const dateQuery = {};
+    if (options.from instanceof Date && !isNaN(options.from.getTime())) dateQuery.$gte = options.from;
+    if (options.to instanceof Date && !isNaN(options.to.getTime())) dateQuery.$lt = options.to;
+    if (Object.keys(dateQuery).length > 0) query.date = dateQuery;
+  }
+
+  const limit = Number.isFinite(options.limit) ? Math.max(1, Math.min(2000, options.limit)) : null;
+  const skip = Number.isFinite(options.skip) ? Math.max(0, options.skip) : 0;
+
+  let q = MilkTransaction.find(query).sort({ date: -1 });
+  if (skip) q = q.skip(skip);
+  if (limit) q = q.limit(limit);
+  const transactions = await q;
   return transactions;
 }
 
