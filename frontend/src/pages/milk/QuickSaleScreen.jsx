@@ -242,6 +242,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
   const [customModal, setCustomModal] = useState(null);
   const [editModal, setEditModal] = useState(null);
   const [pickTxModal, setPickTxModal] = useState(null);
+  const [pickDeleteModal, setPickDeleteModal] = useState(null);
   const [selectedDateYmd, setSelectedDateYmd] = useState(() => getTodayYmdIST());
   const [calendarOpen, setCalendarOpen] = useState(false);
 
@@ -367,14 +368,21 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
     const dailyQuantity = Number(buyer.quantity) || 0;
     const rate = Number(buyer.rate) || 0;
+    const src = (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(String(buyer.milkSource).toLowerCase()))
+      ? String(buyer.milkSource).toLowerCase()
+      : 'cow';
     setCustomModal({
       name: buyer.name,
       mobile: String(buyer.mobile).trim(),
       dateStr: ds,
-      multiLine: false,
-      quantity: String(dailyQuantity || ''),
-      pricePerLiter: String(rate || ''),
-      milkSource: (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(buyer.milkSource)) ? buyer.milkSource : 'cow',
+      multiLine: true,
+      lines: [
+        {
+          milkSource: src,
+          quantity: String(dailyQuantity || ''),
+          pricePerLiter: String(rate || ''),
+        },
+      ],
     });
   };
 
@@ -383,35 +391,30 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     const saleYmd = String(customModal.dateStr || '').trim() || selectedDateYmd;
     try {
       setActionLoading(`${customModal.mobile}-custom`);
-      if (customModal.multiLine && Array.isArray(customModal.lines) && customModal.lines.length > 0) {
-        for (let i = 0; i < customModal.lines.length; i++) {
-          const line = customModal.lines[i];
-          const q = parseFloat(line.quantity);
-          const p = parseFloat(line.pricePerLiter);
-          if (!(q > 0 && p >= 0)) {
-            Alert.alert('Error', `Milk line ${i + 1}: enter valid quantity and rate.`);
-            setActionLoading(null);
-            return;
-          }
-        }
-        for (const line of customModal.lines) {
-          await milkService.quickSale(
-            customModal.mobile,
-            parseFloat(line.quantity),
-            parseFloat(line.pricePerLiter),
-            line.milkSource,
-            saleYmd
-          );
-        }
-      } else {
-        const q = parseFloat(customModal.quantity);
-        const p = parseFloat(customModal.pricePerLiter);
+      const lines = Array.isArray(customModal.lines) ? customModal.lines : [];
+      if (lines.length === 0) {
+        Alert.alert('Error', 'Add at least one milk line.');
+        setActionLoading(null);
+        return;
+      }
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const q = parseFloat(line.quantity);
+        const p = parseFloat(line.pricePerLiter);
         if (!(q > 0 && p >= 0)) {
-          Alert.alert('Error', 'Enter valid quantity and rate.');
+          Alert.alert('Error', `Milk line ${i + 1}: enter valid quantity and rate.`);
           setActionLoading(null);
           return;
         }
-        await milkService.quickSale(customModal.mobile, q, p, customModal.milkSource, saleYmd);
+      }
+      for (const line of lines) {
+        await milkService.quickSale(
+          customModal.mobile,
+          parseFloat(line.quantity),
+          parseFloat(line.pricePerLiter),
+          line.milkSource,
+          saleYmd
+        );
       }
       setCustomModal(null);
       await loadData(true);
@@ -496,6 +499,10 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
   const handleDeleteCell = (buyer, ds) => {
     const txs = salesForBuyerDate(buyer.mobile, ds);
     if (txs.length === 0) return;
+    if (txs.length > 1) {
+      setPickDeleteModal({ buyer, dateStr: ds, txs });
+      return;
+    }
     Alert.alert(
       'Delete sales',
       `Delete ${txs.length} sale record(s) for ${buyer.name} on ${ds}?`,
@@ -529,6 +536,20 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     const txs = salesForBuyerDate(b.mobile, dateStr);
     const delivered = txs.length > 0;
     const qtySum = txs.reduce((s, t) => s + (Number(t.quantity) || 0), 0);
+    const bySource = txs.reduce((acc, t) => {
+      const key = String(t.milkSource || 'cow');
+      acc[key] = (acc[key] || 0) + (Number(t.quantity) || 0);
+      return acc;
+    }, {});
+    const sourceLine = delivered
+      ? Object.entries(bySource)
+          .filter(([, q]) => q > 0)
+          .map(([src, q]) => {
+            const label = MILK_SOURCE_TYPES.find((s) => s.value === src)?.label || src;
+            return `${label} ${Number(q).toFixed(1)}L`;
+          })
+          .join(' · ')
+      : '';
 
     if (!ok) {
       return (
@@ -569,7 +590,15 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
         <Text style={styles.cellQty} numberOfLines={1}>
           {qtySum.toFixed(1)}L
         </Text>
+        {!!sourceLine && (
+          <Text style={styles.cellSub} numberOfLines={2}>
+            {sourceLine}
+          </Text>
+        )}
         <View style={styles.cellActions}>
+          <TouchableOpacity style={styles.linkBtn} onPress={() => openCustom(b, dateStr)} disabled={actionLoading !== null}>
+            <Text style={styles.linkAdd}>Add</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.linkBtn} onPress={() => openEdit(b, dateStr)} disabled={actionLoading !== null}>
             <Text style={styles.linkEdit}>Edit</Text>
           </TouchableOpacity>
@@ -665,9 +694,39 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                 {customModal.multiLine && Array.isArray(customModal.lines) ? (
                   <ScrollView style={styles.customLinesScroll} keyboardShouldPersistTaps="handled">
                     <Text style={styles.modalHint}>One row per milk type (same as buyer delivery). Adjust qty/rate if needed.</Text>
+                    <TouchableOpacity
+                      style={styles.addLineBtn}
+                      onPress={() =>
+                        setCustomModal((m) => {
+                          if (!m) return m;
+                          const nextLines = Array.isArray(m.lines) ? [...m.lines] : [];
+                          nextLines.push({ milkSource: 'cow', quantity: '', pricePerLiter: '' });
+                          return { ...m, multiLine: true, lines: nextLines };
+                        })
+                      }
+                      disabled={!!actionLoading}
+                    >
+                      <Text style={styles.addLineBtnText}>+ Add more</Text>
+                    </TouchableOpacity>
                     {customModal.lines.map((line, idx) => (
                       <View key={idx} style={styles.customLineCard}>
-                        <Text style={styles.modalLabel}>Line {idx + 1}</Text>
+                        <View style={styles.lineHeaderRow}>
+                          <Text style={styles.modalLabel}>Line {idx + 1}</Text>
+                          {customModal.lines.length > 1 && (
+                            <TouchableOpacity
+                              onPress={() =>
+                                setCustomModal((m) => {
+                                  if (!m?.lines) return m;
+                                  const next = m.lines.filter((_, j) => j !== idx);
+                                  return { ...m, lines: next };
+                                })
+                              }
+                              disabled={!!actionLoading}
+                            >
+                              <Text style={styles.removeLineText}>Remove</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
                         <View style={styles.milkSourceRow}>
                           {MILK_SOURCE_TYPES.map((src) => {
                             const isActive = line.milkSource === src.value;
@@ -788,6 +847,94 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                   ))}
                 </ScrollView>
                 <Button title="Cancel" onPress={() => setPickTxModal(null)} style={styles.cancelBtn} />
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={!!pickDeleteModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Choose entry to delete</Text>
+            {pickDeleteModal && (
+              <>
+                <Text style={styles.modalName}>{pickDeleteModal.buyer.name}</Text>
+                <Text style={styles.modalDate}>{pickDeleteModal.dateStr}</Text>
+                <ScrollView style={styles.pickTxScroll}>
+                  {pickDeleteModal.txs.map((tx) => (
+                    <TouchableOpacity
+                      key={tx._id}
+                      style={styles.pickTxRow}
+                      onPress={() => {
+                        const { buyer, dateStr } = pickDeleteModal;
+                        setPickDeleteModal(null);
+                        Alert.alert(
+                          'Delete sale',
+                          `Delete this sale entry for ${buyer.name} on ${dateStr}?`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Delete',
+                              style: 'destructive',
+                              onPress: async () => {
+                                try {
+                                  setActionLoading(`del-${buyer.mobile}-${dateStr}-${tx._id}`);
+                                  await milkService.deleteTransaction(tx._id);
+                                  await loadData(true);
+                                } catch (e) {
+                                  Alert.alert('Error', e?.message || 'Delete failed.');
+                                } finally {
+                                  setActionLoading(null);
+                                }
+                              },
+                            },
+                          ]
+                        );
+                      }}
+                      disabled={actionLoading !== null}
+                    >
+                      <Text style={styles.pickTxMain}>
+                        {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource}:{' '}
+                        {Number(tx.quantity || 0).toFixed(2)} L @ ₹{Number(tx.pricePerLiter || 0)}/L
+                      </Text>
+                      <Text style={styles.pickTxSub}>{Number(tx.totalAmount || 0).toFixed(2)} ₹</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <View style={styles.modalButtons}>
+                  <Button title="Cancel" onPress={() => setPickDeleteModal(null)} style={styles.cancelBtn} />
+                  <Button
+                    title="Delete all"
+                    onPress={() => {
+                      const { buyer, dateStr, txs } = pickDeleteModal;
+                      Alert.alert(
+                        'Delete all sales',
+                        `Delete ${txs.length} sale record(s) for ${buyer.name} on ${dateStr}?`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Delete all',
+                            style: 'destructive',
+                            onPress: async () => {
+                              try {
+                                setPickDeleteModal(null);
+                                setActionLoading(`del-${buyer.mobile}-${dateStr}-all`);
+                                await Promise.all(txs.map((t) => milkService.deleteTransaction(t._id)));
+                                await loadData(true);
+                              } catch (e) {
+                                Alert.alert('Error', e?.message || 'Delete failed.');
+                              } finally {
+                                setActionLoading(null);
+                              }
+                            },
+                          },
+                        ]
+                      );
+                    }}
+                    disabled={actionLoading !== null}
+                  />
+                </View>
               </>
             )}
           </View>
@@ -917,6 +1064,17 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     backgroundColor: '#fafafa',
   },
+  addLineBtn: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e3f2fd',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+  },
+  addLineBtnText: { color: '#1565c0', fontWeight: '800' },
+  lineHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  removeLineText: { color: '#c62828', fontWeight: '800', fontSize: 12 },
   modalHint: { fontSize: 12, color: '#666', marginBottom: 10 },
   pickTxScroll: { maxHeight: 280, marginVertical: 8 },
   pickTxRow: {
@@ -937,8 +1095,10 @@ const styles = StyleSheet.create({
   cellOffText: { color: '#bbb', fontSize: 18 },
   cellDone: { backgroundColor: '#e8f5e9' },
   cellQty: { fontSize: 13, fontWeight: '700', color: '#2e7d32', textAlign: 'center' },
+  cellSub: { fontSize: 11, color: '#546e7a', textAlign: 'center', marginTop: 2 },
   cellActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4, paddingHorizontal: 4 },
   linkBtn: { flex: 1, alignItems: 'center', paddingVertical: 4 },
+  linkAdd: { fontSize: 12, color: '#1565c0', fontWeight: '700' },
   linkEdit: { fontSize: 12, color: '#1565c0', fontWeight: '700' },
   linkDel: { fontSize: 12, color: '#c62828', fontWeight: '700' },
   miniBtn: { borderRadius: 6, paddingVertical: 8, alignItems: 'center', marginBottom: 4 },

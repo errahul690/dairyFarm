@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -62,6 +62,18 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
   const [editMilkLoading, setEditMilkLoading] = useState(false);
   const [editPaymentTx, setEditPaymentTx] = useState(null);
   const [editPaymentLoading, setEditPaymentLoading] = useState(false);
+  const contentScrollRef = useRef(null);
+  const buyerRowYRef = useRef({});
+  const [pendingScrollToMobile, setPendingScrollToMobile] = useState(null);
+
+  const tryScrollToBuyer = useCallback((mobile) => {
+    const m = mobile && String(mobile).trim();
+    if (!m) return;
+    const y = buyerRowYRef.current[m];
+    if (y == null || !contentScrollRef.current) return;
+    contentScrollRef.current.scrollTo({ y: Math.max(0, y - 16), animated: true });
+    setPendingScrollToMobile(null);
+  }, []);
 
   // Date range for period pending (e.g. 10 to 9 billing)
   const getDefaultDateRange = () => {
@@ -355,12 +367,20 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       setBuyerFilterTab('active');
       setSelectedBuyer(m);
       setLogTab('milk');
+      setPendingScrollToMobile(m);
       if (typeof onConsumedFocusParam === 'function') onConsumedFocusParam();
     })();
     return () => {
       cancelled = true;
     };
   }, [initialFocusMobile]);
+
+  useEffect(() => {
+    if (!pendingScrollToMobile) return;
+    // Wait a tick for layouts to be measured and stored via onLayout.
+    const t = setTimeout(() => tryScrollToBuyer(pendingScrollToMobile), 60);
+    return () => clearTimeout(t);
+  }, [pendingScrollToMobile, tryScrollToBuyer]);
 
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -825,7 +845,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
           <Text style={styles.periodTotalAmount}>{formatCurrency(periodPendingTotal)}</Text>
         </View>
       </View>
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} ref={contentScrollRef}>
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => setShowAddForm(true)}
@@ -885,7 +905,17 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
               const isExpanded = selectedBuyer === buyer.phone;
 
               return (
-                <View key={index} style={styles.buyerCard}>
+                <View
+                  key={index}
+                  style={styles.buyerCard}
+                  onLayout={(e) => {
+                    buyerRowYRef.current[buyer.phone] = e.nativeEvent.layout.y;
+                    if (pendingScrollToMobile && String(pendingScrollToMobile).trim() === String(buyer.phone).trim()) {
+                      // If this is the focused buyer, scroll as soon as we have its Y.
+                      tryScrollToBuyer(pendingScrollToMobile);
+                    }
+                  }}
+                >
                   <TouchableOpacity
                     onPress={() => {
                       if (isExpanded) {
