@@ -273,6 +273,11 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     loadData();
   }, [selectedDateYmd]);
 
+  /** Keep sale day in sync with the header calendar if the user changes date while Custom is open. */
+  useEffect(() => {
+    setCustomModal((m) => (m ? { ...m, dateStr: selectedDateYmd } : m));
+  }, [selectedDateYmd]);
+
   const haveDeliveryForCell = useCallback(
     (buyer, dateStr) => {
       const mobile = String(buyer.mobile || '').trim();
@@ -325,9 +330,10 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       Alert.alert('Set rate & quantity', 'Set this buyer\'s delivery items (or daily quantity and rate) in Buyer screen first.');
       return;
     }
+    const saleYmd = String(ds || '').trim() || selectedDateYmd;
     try {
       setActionLoading(`${buyer.mobile}-${ds}`);
-      await milkService.quickSale(buyer.mobile, null, null, null, ds);
+      await milkService.quickSale(buyer.mobile, null, null, null, saleYmd);
       await loadData(true);
     } catch (e) {
       Alert.alert('Error', e?.message || 'Quick sale failed.');
@@ -374,6 +380,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
 
   const submitCustomSale = async () => {
     if (!customModal) return;
+    const saleYmd = String(customModal.dateStr || '').trim() || selectedDateYmd;
     try {
       setActionLoading(`${customModal.mobile}-custom`);
       if (customModal.multiLine && Array.isArray(customModal.lines) && customModal.lines.length > 0) {
@@ -393,7 +400,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
             parseFloat(line.quantity),
             parseFloat(line.pricePerLiter),
             line.milkSource,
-            customModal.dateStr
+            saleYmd
           );
         }
       } else {
@@ -404,7 +411,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           setActionLoading(null);
           return;
         }
-        await milkService.quickSale(customModal.mobile, q, p, customModal.milkSource, customModal.dateStr);
+        await milkService.quickSale(customModal.mobile, q, p, customModal.milkSource, saleYmd);
       }
       setCustomModal(null);
       await loadData(true);
@@ -457,7 +464,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       return;
     }
     const totalAmount = Math.round(q * p * 100) / 100;
-    const dayDate = new Date(`${editModal.dateStr}T12:00:00`);
+    const dayDate = new Date(`${editModal.dateStr}T12:00:00+05:30`);
     try {
       setActionLoading(`edit-${editModal._id}`);
       await milkService.updateTransaction(editModal._id, {

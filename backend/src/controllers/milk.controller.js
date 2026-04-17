@@ -29,8 +29,10 @@ function getStartOfTodayIST() {
 function getStartOfDayISTFromYmd(ymd) {
   if (!ymd || typeof ymd !== "string") return null;
   const s = ymd.trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const [y, m, d] = s.split("-").map(Number);
+  // Accept plain YYYY-MM-DD or ISO datetime (first 10 chars); full ISO used to fail regex and fell back to "today".
+  const dayPart = s.length >= 10 && s[4] === "-" && s[7] === "-" ? s.slice(0, 10) : s;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dayPart)) return null;
+  const [y, m, d] = dayPart.split("-").map(Number);
   if (!y || !m || !d) return null;
   return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
 }
@@ -194,7 +196,7 @@ const quickSaleSchema = z.object({
   quantity: z.number().positive().optional(),
   pricePerLiter: z.number().nonnegative().optional(),
   milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional(),
-  /** Optional sale calendar day YYYY-MM-DD (IST). Defaults to today. */
+  /** Optional sale calendar day YYYY-MM-DD (IST), or ISO string (first 10 chars used). Defaults to today. */
   date: z.string().optional(),
 });
 
@@ -220,7 +222,12 @@ const createQuickSale = async (req, res) => {
     const buyer = await findBuyerByUserId(user._id);
     if (!buyer) return res.status(404).json({ error: "Buyer profile not found." });
 
-    const saleDay = getStartOfDayISTFromYmd(parsed.data.date) || getStartOfTodayIST();
+    const rawDate = parsed.data.date;
+    const saleDayFromBody = getStartOfDayISTFromYmd(rawDate);
+    const saleDay = saleDayFromBody || getStartOfTodayIST();
+    if (!saleDayFromBody && rawDate != null && String(rawDate).trim() !== "") {
+      console.warn("[milk quick-sale] Invalid date in body; using IST today:", { rawDate });
+    }
     const buyerName = user.name || buyer.name;
 
     // "Delivered" (no custom qty/rate): use deliveryItems if set, else single quantity/rate/milkSource

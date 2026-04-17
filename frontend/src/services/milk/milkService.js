@@ -136,14 +136,18 @@ export const milkService = {
     if (quantity != null && quantity > 0) payload.quantity = quantity;
     if (pricePerLiter != null && pricePerLiter >= 0) payload.pricePerLiter = pricePerLiter;
     if (milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(milkSource)) payload.milkSource = milkSource;
-    if (saleDate != null) {
-      if (saleDate instanceof Date) {
-        const y = saleDate.getFullYear();
-        const m = String(saleDate.getMonth() + 1).padStart(2, '0');
-        const d = String(saleDate.getDate()).padStart(2, '0');
-        payload.date = `${y}-${m}-${d}`;
-      } else {
-        payload.date = String(saleDate).trim();
+    if (saleDate != null && saleDate !== '') {
+      const ymd =
+        saleDate instanceof Date
+          ? (() => {
+              const y = saleDate.getFullYear();
+              const m = String(saleDate.getMonth() + 1).padStart(2, '0');
+              const d = String(saleDate.getDate()).padStart(2, '0');
+              return `${y}-${m}-${d}`;
+            })()
+          : String(saleDate).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        payload.date = ymd;
       }
     }
     const response = await apiClient.post('/milk/quick-sale', payload);
