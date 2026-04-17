@@ -37,6 +37,7 @@ const buyerMenuItems = [
   { id: 21, title: 'Buyer Dashboard', icon: '📊' },
   { id: 22, title: 'Milk Request', icon: '🥛' },
   { id: 27, title: 'My Schedule', icon: '📅' },
+  { id: 28, title: 'Ledger', icon: '📒' },
   { id: 23, title: 'Transaction History', icon: '📜' },
   { id: 24, title: 'Payment History', icon: '💵' },
   { id: 25, title: 'Pending Payment', icon: '💳' },

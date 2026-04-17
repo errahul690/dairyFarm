@@ -212,6 +212,14 @@ const listSettlements = async (req, res) => {
     const { paymentDirection } = req.query || {};
     const filter = {};
     if (paymentDirection != null && String(paymentDirection).trim() !== "") filter.paymentDirection = String(paymentDirection).trim();
+    // Consumers (role 2) can only view their own settlement records.
+    const user = req.user;
+    if (user && user.role === 2) {
+      const customerId = user.userId || user.id || user._id;
+      const customerMobile = user.mobile ? String(user.mobile).trim() : null;
+      if (customerId) filter.customerId = customerId;
+      if (customerMobile) filter.customerMobile = customerMobile;
+    }
     const payments = await getSettlementPayments(filter);
     const list = (payments || []).map((p) => ({
       _id: p._id && p._id.toString ? p._id.toString() : String(p._id),

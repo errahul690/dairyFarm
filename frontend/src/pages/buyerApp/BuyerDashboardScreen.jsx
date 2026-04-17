@@ -35,6 +35,7 @@ function getTodayStr() {
 export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
   const [transactions, setTransactions] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [settlements, setSettlements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState(() => getMonthStart(new Date()));
   const [dateTo, setDateTo] = useState(getTodayStr());
@@ -46,13 +47,15 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [txData, paymentData] = await Promise.all([
+      const [txData, paymentData, settlementData] = await Promise.all([
         milkService.getTransactions(),
         paymentService.getPayments().catch(() => []),
+        paymentService.getSettlements().catch(() => []),
       ]);
       const sales = (Array.isArray(txData) ? txData : []).filter((t) => t.type === 'sale');
       setTransactions(sales);
       setPayments(Array.isArray(paymentData) ? paymentData : []);
+      setSettlements(Array.isArray(settlementData) ? settlementData : []);
     } catch (error) {
       console.error('Buyer dashboard load error:', error);
       Alert.alert('Error', 'Failed to load data.');
@@ -61,13 +64,39 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
     }
   };
 
+  const latestCutoff = useMemo(() => {
+    let max = null;
+    (settlements || []).forEach((s) => {
+      const dt = s?.settledAt instanceof Date ? s.settledAt : new Date(s?.settledAt);
+      if (isNaN(dt.getTime())) return;
+      if (!max || dt > max) max = dt;
+    });
+    return max;
+  }, [settlements]);
+
+  const transactionsAfterCutoff = useMemo(() => {
+    if (!latestCutoff) return transactions;
+    return (transactions || []).filter((t) => {
+      const dt = new Date(t.date);
+      return !isNaN(dt.getTime()) && dt > latestCutoff;
+    });
+  }, [transactions, latestCutoff]);
+
+  const paymentsAfterCutoff = useMemo(() => {
+    if (!latestCutoff) return payments;
+    return (payments || []).filter((p) => {
+      const dt = p?.paymentDate instanceof Date ? p.paymentDate : new Date(p?.paymentDate);
+      return !isNaN(dt.getTime()) && dt > latestCutoff;
+    });
+  }, [payments, latestCutoff]);
+
   const totalMilkAmount = useMemo(
-    () => transactions.reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0),
-    [transactions]
+    () => transactionsAfterCutoff.reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0),
+    [transactionsAfterCutoff]
   );
   const totalPaid = useMemo(
-    () => payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
-    [payments]
+    () => paymentsAfterCutoff.reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
+    [paymentsAfterCutoff]
   );
   const pendingAmount = totalMilkAmount - totalPaid;
 
@@ -79,18 +108,18 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
       : '';
 
   const inRangeTx = useMemo(
-    () => transactions.filter((t) => {
+    () => transactionsAfterCutoff.filter((t) => {
       const d = txDateStr(t);
       return d && d >= dateFrom && d <= dateTo;
     }),
-    [transactions, dateFrom, dateTo]
+    [transactionsAfterCutoff, dateFrom, dateTo]
   );
   const inRangePay = useMemo(
-    () => payments.filter((p) => {
+    () => paymentsAfterCutoff.filter((p) => {
       const d = payDateStr(p);
       return d && d >= dateFrom && d <= dateTo;
     }),
-    [payments, dateFrom, dateTo]
+    [paymentsAfterCutoff, dateFrom, dateTo]
   );
 
   const periodMilk = useMemo(
@@ -103,14 +132,14 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
   );
 
   const pendingUptoToDate = useMemo(() => {
-    const milkUpto = transactions
+    const milkUpto = transactionsAfterCutoff
       .filter((t) => txDateStr(t) && txDateStr(t) <= dateTo)
       .reduce((sum, t) => sum + (Number(t.totalAmount) || 0), 0);
-    const paidUpto = payments
+    const paidUpto = paymentsAfterCutoff
       .filter((p) => payDateStr(p) && payDateStr(p) <= dateTo)
       .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
     return milkUpto - paidUpto;
-  }, [transactions, payments, dateTo]);
+  }, [transactionsAfterCutoff, paymentsAfterCutoff, dateTo]);
 
   const recentInRange = useMemo(
     () => [...inRangeTx].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5),
@@ -169,6 +198,9 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
                 onPress={() => onNavigate('Pending Payment')}
               >
                 <Text style={styles.linkButtonText}>View & Pay →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.moreLinkInline} onPress={() => onNavigate('Ledger')}>
+                <Text style={styles.moreLinkTextInline}>View Ledger →</Text>
               </TouchableOpacity>
             </View>
 
@@ -261,6 +293,8 @@ const styles = StyleSheet.create({
   pendingText: { color: '#d32f2f' },
   linkButton: { marginTop: 8 },
   linkButtonText: { color: '#4CAF50', fontWeight: '600', fontSize: 14 },
+  moreLinkInline: { marginTop: 10, alignSelf: 'center' },
+  moreLinkTextInline: { color: '#1565C0', fontWeight: '700', fontSize: 14 },
   section: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 24, elevation: 2, shadowOpacity: 0.1, shadowRadius: 3 },
   sectionTitle: { fontSize: 16, fontWeight: '600', marginBottom: 12, color: '#333' },
   emptyText: { color: '#888', fontSize: 14 },
