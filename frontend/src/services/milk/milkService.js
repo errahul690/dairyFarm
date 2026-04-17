@@ -124,17 +124,28 @@ export const milkService = {
   },
 
   /**
-   * Quick sale: record today's delivery for a buyer.
+   * Quick sale: record delivery for a buyer (default calendar day: today).
    * @param {string} buyerMobile - 10-digit buyer mobile
    * @param {number} [quantity] - optional; if omitted uses buyer's set daily quantity
    * @param {number} [pricePerLiter] - optional; if omitted uses buyer's set rate
    * @param {string} [milkSource] - optional; cow/buffalo/sheep/goat; if omitted uses buyer's default
+   * @param {string|Date} [saleDate] - optional YYYY-MM-DD (IST calendar day) for the sale
    */
-  quickSale: async (buyerMobile, quantity = null, pricePerLiter = null, milkSource = null) => {
+  quickSale: async (buyerMobile, quantity = null, pricePerLiter = null, milkSource = null, saleDate = null) => {
     const payload = { buyerMobile: String(buyerMobile).trim() };
     if (quantity != null && quantity > 0) payload.quantity = quantity;
     if (pricePerLiter != null && pricePerLiter >= 0) payload.pricePerLiter = pricePerLiter;
     if (milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(milkSource)) payload.milkSource = milkSource;
+    if (saleDate != null) {
+      if (saleDate instanceof Date) {
+        const y = saleDate.getFullYear();
+        const m = String(saleDate.getMonth() + 1).padStart(2, '0');
+        const d = String(saleDate.getDate()).padStart(2, '0');
+        payload.date = `${y}-${m}-${d}`;
+      } else {
+        payload.date = String(saleDate).trim();
+      }
+    }
     const response = await apiClient.post('/milk/quick-sale', payload);
     if (response && Array.isArray(response.transactions)) return response;
     return {

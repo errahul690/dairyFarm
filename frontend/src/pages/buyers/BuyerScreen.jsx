@@ -21,7 +21,7 @@ import { formatCurrency } from '../../utils/currencyUtils';
 import { authService } from '../../services/auth/authService';
 import { MILK_SOURCE_TYPES } from '../../constants';
 
-export default function BuyerScreen({ onNavigate, onLogout }) {
+export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, onConsumedFocusParam }) {
   const [transactions, setTransactions] = useState([]);
   const [payments, setPayments] = useState([]);
   const [buyersData, setBuyersData] = useState([]);
@@ -44,17 +44,24 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
     deliveryDays: [],
     deliveryCycleDays: '2',
     deliveryCycleStartDate: '',
+    billingMode: 'none',
+    billingDayOfMonth: '',
   });
   const [showAddMilkModal, setShowAddMilkModal] = useState(false);
   const [addMilkBuyer, setAddMilkBuyer] = useState(null);
   const [addMilkLoading, setAddMilkLoading] = useState(false);
-  const [milkTxForm, setMilkTxForm] = useState({ quantity: '', date: '', pricePerLiter: '' });
+  const [milkTxForm, setMilkTxForm] = useState({ quantity: '', date: '', pricePerLiter: '', milkSource: 'cow' });
   const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
   const [addPaymentBuyer, setAddPaymentBuyer] = useState(null);
   const [addPaymentLoading, setAddPaymentLoading] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', date: '' });
   const [buyerFilterTab, setBuyerFilterTab] = useState('active'); // 'active' | 'inactive'
   const [addAsSellerLoading, setAddAsSellerLoading] = useState(null);
+  const [buyerBillsCache, setBuyerBillsCache] = useState({});
+  const [editMilkTx, setEditMilkTx] = useState(null);
+  const [editMilkLoading, setEditMilkLoading] = useState(false);
+  const [editPaymentTx, setEditPaymentTx] = useState(null);
+  const [editPaymentLoading, setEditPaymentLoading] = useState(false);
 
   // Date range for period pending (e.g. 10 to 9 billing)
   const getDefaultDateRange = () => {
@@ -88,10 +95,15 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
 
   const openAddMilkModal = (buyer) => {
     setAddMilkBuyer(buyer);
+    const items = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0 ? buyer.deliveryItems : null;
+    const defaultSrc = items && items[0]?.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(items[0].milkSource)
+      ? items[0].milkSource
+      : (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(buyer.milkSource) ? buyer.milkSource : 'cow');
     setMilkTxForm({
       quantity: buyer.dailyQuantity != null ? String(buyer.dailyQuantity) : '',
       date: getTodayDateStr(),
       pricePerLiter: buyer.fixedPrice != null ? String(buyer.fixedPrice) : '',
+      milkSource: defaultSrc,
     });
     setShowAddMilkModal(true);
   };
@@ -114,7 +126,9 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
       return;
     }
     const totalAmount = Math.round(q * rate * 100) / 100;
-    const milkSource = (addMilkBuyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(addMilkBuyer.milkSource)) ? addMilkBuyer.milkSource : 'cow';
+    const milkSource = (milkTxForm.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(milkTxForm.milkSource))
+      ? milkTxForm.milkSource
+      : 'cow';
     try {
       setAddMilkLoading(true);
       await milkService.recordSale({
@@ -178,6 +192,147 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
     }
   };
 
+  const txToYmd = (txDate) => {
+    const d = new Date(txDate);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const openEditMilkModal = (buyer, tx) => {
+    setEditMilkTx({
+      buyer,
+      _id: tx._id,
+      buyerName: buyer.name,
+      buyerPhone: buyer.phone,
+      buyerId: buyer.userId,
+      quantity: String(tx.quantity ?? ''),
+      date: txToYmd(tx.date),
+      pricePerLiter: String(tx.pricePerLiter ?? ''),
+      milkSource: (tx.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(tx.milkSource)) ? tx.milkSource : 'cow',
+      paymentType: tx.paymentType || 'credit',
+      amountReceived: tx.amountReceived != null ? String(tx.amountReceived) : '',
+      notes: tx.notes || '',
+      buyerLabel: tx.buyer || buyer.name,
+    });
+  };
+
+  const submitEditMilk = async () => {
+    if (!editMilkTx) return;
+    const q = parseFloat(editMilkTx.quantity);
+    const p = parseFloat(editMilkTx.pricePerLiter);
+    if (!(q > 0 && p >= 0)) {
+      Alert.alert('Error', 'Enter valid quantity and rate');
+      return;
+    }
+    const dateObj = new Date(`${editMilkTx.date}T12:00:00`);
+    if (isNaN(dateObj.getTime())) {
+      Alert.alert('Error', 'Enter valid date');
+      return;
+    }
+    const totalAmount = Math.round(q * p * 100) / 100;
+    try {
+      setEditMilkLoading(true);
+      await milkService.updateTransaction(editMilkTx._id, {
+        type: 'sale',
+        date: dateObj,
+        quantity: q,
+        pricePerLiter: p,
+        totalAmount,
+        buyer: editMilkTx.buyerLabel,
+        buyerPhone: editMilkTx.buyerPhone,
+        buyerId: editMilkTx.buyerId,
+        notes: editMilkTx.notes || undefined,
+        milkSource: editMilkTx.milkSource,
+        paymentType: editMilkTx.paymentType || 'credit',
+        amountReceived:
+          editMilkTx.paymentType === 'cash' && editMilkTx.amountReceived
+            ? parseFloat(editMilkTx.amountReceived)
+            : undefined,
+      });
+      setEditMilkTx(null);
+      await loadData(true);
+      Alert.alert('Success', 'Milk transaction updated.');
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Update failed.');
+    } finally {
+      setEditMilkLoading(false);
+    }
+  };
+
+  const confirmDeleteMilkTx = (buyer, tx) => {
+    Alert.alert('Delete milk sale?', `${formatDate(new Date(tx.date))} · ${formatCurrency(tx.totalAmount)}`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await milkService.deleteTransaction(tx._id);
+            await loadData(true);
+          } catch (e) {
+            Alert.alert('Error', e?.message || 'Delete failed.');
+          }
+        },
+      },
+    ]);
+  };
+
+  const openEditPaymentModal = (buyer, pay) => {
+    setEditPaymentTx({
+      buyer,
+      _id: pay._id,
+      amount: String(pay.amount ?? ''),
+      date: txToYmd(pay.paymentDate),
+      notes: pay.notes || '',
+    });
+  };
+
+  const submitEditPayment = async () => {
+    if (!editPaymentTx) return;
+    const amt = parseFloat(editPaymentTx.amount);
+    if (!(amt > 0)) {
+      Alert.alert('Error', 'Enter valid amount');
+      return;
+    }
+    const dateObj = new Date(`${editPaymentTx.date}T12:00:00`);
+    if (isNaN(dateObj.getTime())) {
+      Alert.alert('Error', 'Enter valid date');
+      return;
+    }
+    try {
+      setEditPaymentLoading(true);
+      await paymentService.updatePayment(editPaymentTx._id, {
+        amount: amt,
+        paymentDate: dateObj,
+        notes: editPaymentTx.notes || undefined,
+      });
+      setEditPaymentTx(null);
+      await loadData(true);
+      Alert.alert('Success', 'Payment updated.');
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Update failed.');
+    } finally {
+      setEditPaymentLoading(false);
+    }
+  };
+
+  const confirmDeletePayment = (pay) => {
+    Alert.alert('Delete payment?', `${formatDate(pay.paymentDate)} · ${formatCurrency(pay.amount)}`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await paymentService.deletePayment(pay._id);
+            await loadData(true);
+          } catch (e) {
+            Alert.alert('Error', e?.message || 'Delete failed.');
+          }
+        },
+      },
+    ]);
+  };
+
   useEffect(() => {
     loadData();
   }, []);
@@ -189,6 +344,23 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
     };
     loadUser();
   }, []);
+
+  useEffect(() => {
+    const m = initialFocusMobile && String(initialFocusMobile).trim();
+    if (!m) return;
+    let cancelled = false;
+    (async () => {
+      await loadData(true);
+      if (cancelled) return;
+      setBuyerFilterTab('active');
+      setSelectedBuyer(m);
+      setLogTab('milk');
+      if (typeof onConsumedFocusParam === 'function') onConsumedFocusParam();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialFocusMobile]);
 
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -235,6 +407,9 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
           deliveryDays: buyer.deliveryDays,
           deliveryCycleDays: buyer.deliveryCycleDays,
           deliveryCycleStartDate: buyer.deliveryCycleStartDate,
+          billingMode: buyer.billingMode,
+          billingDayOfMonth: buyer.billingDayOfMonth,
+          lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
         });
       }
     });
@@ -311,7 +486,12 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
   const getBuyerPaymentTransactions = (phone) => {
     const p = String(phone || '').trim();
     return (payments || [])
-      .filter((pay) => String(pay.customerMobile || '').trim() === p)
+      .filter((pay) => {
+        if (String(pay.customerMobile || '').trim() !== p) return false;
+        if (pay.isSettlement) return false;
+        if (pay.paymentDirection === 'to_seller') return false;
+        return true;
+      })
       .sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime());
   };
 
@@ -354,6 +534,13 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
       deliveryDays: Array.isArray(buyer.deliveryDays) ? [...buyer.deliveryDays] : [],
       deliveryCycleDays: buyer.deliveryCycleDays ? String(buyer.deliveryCycleDays) : '2',
       deliveryCycleStartDate: startDate,
+      billingMode: (() => {
+        const m = buyer.billingMode;
+        if (m === 'daily' || m === 'month_end' || m === 'custom') return m;
+        if (buyer.billingDayOfMonth != null) return 'custom';
+        return 'none';
+      })(),
+      billingDayOfMonth: buyer.billingDayOfMonth != null ? String(buyer.billingDayOfMonth) : '',
     });
     setShowEditForm(true);
   };
@@ -392,6 +579,18 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
       Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
       return;
     }
+    if (formData.billingMode === 'custom') {
+      const billingDayRaw = String(formData.billingDayOfMonth || '').trim();
+      if (!billingDayRaw) {
+        Alert.alert('Error', 'Enter billing day (1–31) for custom schedule');
+        return;
+      }
+      const bn = parseInt(billingDayRaw, 10);
+      if (!Number.isInteger(bn) || bn < 1 || bn > 31) {
+        Alert.alert('Error', 'Billing day must be between 1 and 31');
+        return;
+      }
+    }
     try {
       setLoading(true);
       const first = builtItems[0];
@@ -425,6 +624,19 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
         deliveryPayload.deliveryCycleStartDate = formData.deliveryCycleStartDate
           ? new Date(formData.deliveryCycleStartDate).toISOString()
           : null;
+      }
+      if (formData.billingMode === 'none') {
+        deliveryPayload.billingMode = null;
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'daily') {
+        deliveryPayload.billingMode = 'daily';
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'month_end') {
+        deliveryPayload.billingMode = 'month_end';
+        deliveryPayload.billingDayOfMonth = null;
+      } else {
+        deliveryPayload.billingMode = 'custom';
+        deliveryPayload.billingDayOfMonth = parseInt(String(formData.billingDayOfMonth || '').trim(), 10);
       }
       if (editingBuyer._id) {
         await buyerService.updateBuyer(editingBuyer._id, deliveryPayload);
@@ -481,6 +693,19 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
       return;
     }
 
+    if (formData.billingMode === 'custom') {
+      const br = String(formData.billingDayOfMonth || '').trim();
+      if (!br) {
+        Alert.alert('Error', 'Enter billing day (1–31) for custom schedule');
+        return;
+      }
+      const bn = parseInt(br, 10);
+      if (!Number.isInteger(bn) || bn < 1 || bn > 31) {
+        Alert.alert('Error', 'Billing day must be between 1 and 31');
+        return;
+      }
+    }
+
     try {
       setLoading(true);
       const first = builtItems[0];
@@ -524,6 +749,19 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
       deliveryPayload.quantity = first.quantity;
       deliveryPayload.rate = first.rate;
       deliveryPayload.milkSource = milkSource;
+      if (formData.billingMode === 'none') {
+        deliveryPayload.billingMode = null;
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'daily') {
+        deliveryPayload.billingMode = 'daily';
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'month_end') {
+        deliveryPayload.billingMode = 'month_end';
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'custom') {
+        deliveryPayload.billingMode = 'custom';
+        deliveryPayload.billingDayOfMonth = parseInt(String(formData.billingDayOfMonth || '').trim(), 10);
+      }
 
       const mobileTrim = formData.mobile.trim();
       const allBuyers = await buyerService.getBuyers(false);
@@ -537,6 +775,8 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
         deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
         deliveryScheduleType: 'daily', deliveryDays: [], deliveryCycleDays: '2',
         deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
+        billingMode: 'none',
+        billingDayOfMonth: '',
       });
       setShowAddForm(false);
       await loadData(true);
@@ -653,6 +893,11 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                       } else {
                         setSelectedBuyer(buyer.phone);
                         setLogTab('milk');
+                        if (canEditUsers && buyer._id) {
+                          buyerService.getBillsForBuyer(buyer._id).then((list) => {
+                            setBuyerBillsCache((c) => ({ ...c, [String(buyer._id)]: Array.isArray(list) ? list : [] }));
+                          }).catch(() => {});
+                        }
                       }
                     }}
                     activeOpacity={0.7}
@@ -757,6 +1002,23 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                             : 'Settled'}
                       </Text>
                     </View>
+                    {(() => {
+                      const hint =
+                        buyer.billingMode === 'daily'
+                          ? 'Every day @ 23:59'
+                          : buyer.billingMode === 'month_end'
+                            ? 'Last day of month @ 23:59'
+                            : buyer.billingMode === 'custom' || (buyer.billingDayOfMonth != null && !buyer.billingMode)
+                              ? `Day ${buyer.billingDayOfMonth} @ 23:59`
+                              : null;
+                      if (!hint) return null;
+                      return (
+                        <View style={styles.billingHintRow}>
+                          <Text style={styles.billingHintLabel}>Auto bill (IST):</Text>
+                          <Text style={styles.billingHintValue}>{hint}</Text>
+                        </View>
+                      );
+                    })()}
                     {(buyer.fixedPrice || buyer.dailyQuantity || buyer.milkSource || (buyer.deliveryItems && buyer.deliveryItems.length > 0)) && (
                       <View style={styles.buyerDetails}>
                         {buyer.deliveryItems && buyer.deliveryItems.length > 0 ? (
@@ -811,6 +1073,28 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                         </TouchableOpacity>
                       </View>
 
+                      {canEditUsers && (buyer.billingMode === 'daily' || buyer.billingMode === 'month_end' || buyer.billingMode === 'custom' || (buyer.billingDayOfMonth != null && !buyer.billingMode)) && (
+                        <View style={styles.billsSection}>
+                          <Text style={styles.billsSectionTitle}>Auto-generated bills</Text>
+                          {(buyerBillsCache[String(buyer._id)] || []).length === 0 ? (
+                            <Text style={styles.billEmpty}>No bills yet (runs at 23:59 IST per your schedule).</Text>
+                          ) : (
+                            (buyerBillsCache[String(buyer._id)] || []).map((bill) => (
+                              <View key={bill._id} style={styles.billCard}>
+                                <Text style={styles.billPeriod}>Period end {bill.billingPeriodKey}</Text>
+                                <Text style={styles.billLine}>
+                                  Cycle milk: {Number(bill.cycleMilkQuantity || 0).toFixed(2)} L · {formatCurrency(bill.cycleMilkAmount || 0)}
+                                </Text>
+                                <Text style={styles.billLine}>
+                                  Previous balance: {formatCurrency(bill.previousBalance || 0)} · Paid in cycle: {formatCurrency(bill.paymentsInCycle || 0)}
+                                </Text>
+                                <Text style={styles.billDue}>Due (cycle): {formatCurrency(bill.totalDue || 0)}</Text>
+                              </View>
+                            ))
+                          )}
+                        </View>
+                      )}
+
                       {logTab === 'milk' && (
                         <>
                           {canEditUsers && (
@@ -831,11 +1115,22 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                                 </View>
                                 <View style={styles.transactionRow}>
                                   <Text style={styles.transactionDetails}>
+                                    {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource || 'Cow'} ·{' '}
                                     {tx.quantity.toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
                                   </Text>
                                 </View>
                                 {tx.notes && (
                                   <Text style={styles.transactionNotes}>{tx.notes}</Text>
+                                )}
+                                {canEditUsers && (
+                                  <View style={styles.txActionRow}>
+                                    <TouchableOpacity onPress={() => openEditMilkModal(buyer, tx)} style={styles.txActionBtn}>
+                                      <Text style={styles.txActionEdit}>Edit</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => confirmDeleteMilkTx(buyer, tx)} style={styles.txActionBtn}>
+                                      <Text style={styles.txActionDel}>Delete</Text>
+                                    </TouchableOpacity>
+                                  </View>
                                 )}
                               </View>
                             ))
@@ -869,6 +1164,16 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                                   </Text>
                                 </View>
                                 {pay.notes ? <Text style={styles.transactionNotes}>{pay.notes}</Text> : null}
+                                {canEditUsers && (
+                                  <View style={styles.txActionRow}>
+                                    <TouchableOpacity onPress={() => openEditPaymentModal(buyer, pay)} style={styles.txActionBtn}>
+                                      <Text style={styles.txActionEdit}>Edit</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => confirmDeletePayment(pay)} style={styles.txActionBtn}>
+                                      <Text style={styles.txActionDel}>Delete</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                )}
                               </View>
                             ))
                           ) : (
@@ -1008,6 +1313,38 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                 <Text style={styles.addDeliveryItemBtnText}>+ Add another milk type</Text>
               </TouchableOpacity>
 
+              <Text style={styles.label}>Auto billing</Text>
+              <Text style={styles.hint}>Bill closes at 23:59 IST. Pick how often to generate a bill.</Text>
+              <View style={styles.billingModeRow}>
+                {[
+                  { id: 'none', label: 'Off' },
+                  { id: 'daily', label: 'Daily' },
+                  { id: 'month_end', label: 'Month end' },
+                  { id: 'custom', label: 'Custom day' },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[styles.billingModeChip, formData.billingMode === opt.id && styles.billingModeChipActive]}
+                    onPress={() => setFormData({ ...formData, billingMode: opt.id })}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.billingModeChipText, formData.billingMode === opt.id && styles.billingModeChipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {formData.billingMode === 'custom' && (
+                <>
+                  <Text style={styles.sublabel}>Day of month (1–31)</Text>
+                  <Input
+                    placeholder="e.g. 10"
+                    value={formData.billingDayOfMonth}
+                    onChangeText={(text) => setFormData({ ...formData, billingDayOfMonth: text })}
+                    keyboardType="number-pad"
+                    style={styles.input}
+                  />
+                </>
+              )}
+
               <Text style={styles.label}>Delivery schedule (Quick Sale)</Text>
               <Text style={styles.hint}>Choose when this buyer gets milk. They will appear in Quick Sale only on these days.</Text>
               <View style={styles.scheduleTypeRow}>
@@ -1100,10 +1437,12 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                     deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
                     deliveryScheduleType: 'daily', deliveryDays: [], deliveryCycleDays: '2',
                     deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
+                    billingMode: 'none',
+                    billingDayOfMonth: '',
                   });
                 }}
                 style={styles.closeButton}
-              >
+                >
                 <Text style={styles.closeButtonText}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -1208,6 +1547,38 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                 <Text style={styles.addDeliveryItemBtnText}>+ Add another milk type</Text>
               </TouchableOpacity>
 
+              <Text style={styles.label}>Auto billing</Text>
+              <Text style={styles.hint}>Bill closes at 23:59 IST. Pick how often to generate a bill.</Text>
+              <View style={styles.billingModeRow}>
+                {[
+                  { id: 'none', label: 'Off' },
+                  { id: 'daily', label: 'Daily' },
+                  { id: 'month_end', label: 'Month end' },
+                  { id: 'custom', label: 'Custom day' },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[styles.billingModeChip, formData.billingMode === opt.id && styles.billingModeChipActive]}
+                    onPress={() => setFormData({ ...formData, billingMode: opt.id })}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.billingModeChipText, formData.billingMode === opt.id && styles.billingModeChipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {formData.billingMode === 'custom' && (
+                <>
+                  <Text style={styles.sublabel}>Day of month (1–31)</Text>
+                  <Input
+                    placeholder="e.g. 10"
+                    value={formData.billingDayOfMonth}
+                    onChangeText={(text) => setFormData({ ...formData, billingDayOfMonth: text })}
+                    keyboardType="number-pad"
+                    style={styles.input}
+                  />
+                </>
+              )}
+
               <Text style={styles.label}>Delivery schedule (Quick Sale)</Text>
               <Text style={styles.hint}>Choose when this buyer gets milk. They will appear in Quick Sale only on these days.</Text>
               <View style={styles.scheduleTypeRow}>
@@ -1307,15 +1678,25 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
               <View style={styles.addMilkBuyerInfo}>
                 <Text style={styles.addMilkBuyerName}>{addMilkBuyer.name}</Text>
                 <Text style={styles.addMilkBuyerPhone}>{addMilkBuyer.phone}</Text>
-                <View style={styles.addMilkSourceRow}>
-                  <Text style={styles.addMilkSourceLabel}>Milk source (from buyer):</Text>
-                  <Text style={styles.addMilkBuyerMilkSource}>
-                    {MILK_SOURCE_TYPES.find((s) => s.value === (addMilkBuyer.milkSource || 'cow'))?.label || String(addMilkBuyer.milkSource || 'cow').charAt(0).toUpperCase() + String(addMilkBuyer.milkSource || 'cow').slice(1)}
-                  </Text>
-                </View>
               </View>
             )}
             <ScrollView style={styles.formContainer}>
+              <Text style={styles.label}>Milk type *</Text>
+              <View style={styles.addMilkSourceChips}>
+                {MILK_SOURCE_TYPES.map((src) => {
+                  const isActive = milkTxForm.milkSource === src.value;
+                  return (
+                    <TouchableOpacity
+                      key={src.value}
+                      style={[styles.milkSourceChip, isActive && styles.milkSourceChipActive]}
+                      onPress={() => setMilkTxForm((f) => ({ ...f, milkSource: src.value }))}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.milkSourceChipText, isActive && styles.milkSourceChipTextActive]}>{src.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
               <Text style={styles.label}>Quantity (L) *</Text>
               <Input
                 placeholder="e.g. 10"
@@ -1404,6 +1785,125 @@ export default function BuyerScreen({ onNavigate, onLogout }) {
                 style={styles.createButton}
               />
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit milk sale */}
+      <Modal
+        visible={!!editMilkTx}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditMilkTx(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit milk sale</Text>
+              <TouchableOpacity onPress={() => setEditMilkTx(null)} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {editMilkTx && (
+              <ScrollView style={styles.formContainer}>
+                <Text style={styles.label}>Milk type *</Text>
+                <View style={styles.addMilkSourceChips}>
+                  {MILK_SOURCE_TYPES.map((src) => {
+                    const isActive = editMilkTx.milkSource === src.value;
+                    return (
+                      <TouchableOpacity
+                        key={src.value}
+                        style={[styles.milkSourceChip, isActive && styles.milkSourceChipActive]}
+                        onPress={() => setEditMilkTx((m) => (m ? { ...m, milkSource: src.value } : m))}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.milkSourceChipText, isActive && styles.milkSourceChipTextActive]}>{src.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <Text style={styles.label}>Quantity (L) *</Text>
+                <Input
+                  value={editMilkTx.quantity}
+                  onChangeText={(t) => setEditMilkTx((m) => (m ? { ...m, quantity: t } : m))}
+                  keyboardType="decimal-pad"
+                  style={styles.input}
+                />
+                <Text style={styles.label}>Rate (₹/L) *</Text>
+                <Input
+                  value={editMilkTx.pricePerLiter}
+                  onChangeText={(t) => setEditMilkTx((m) => (m ? { ...m, pricePerLiter: t } : m))}
+                  keyboardType="decimal-pad"
+                  style={styles.input}
+                />
+                <Text style={styles.label}>Date (YYYY-MM-DD) *</Text>
+                <Input
+                  value={editMilkTx.date}
+                  onChangeText={(t) => setEditMilkTx((m) => (m ? { ...m, date: t } : m))}
+                  style={styles.input}
+                />
+                <Text style={styles.label}>Notes</Text>
+                <Input
+                  value={editMilkTx.notes}
+                  onChangeText={(t) => setEditMilkTx((m) => (m ? { ...m, notes: t } : m))}
+                  style={styles.input}
+                />
+                <Button
+                  title={editMilkLoading ? 'Saving...' : 'Save'}
+                  onPress={submitEditMilk}
+                  disabled={editMilkLoading}
+                  style={styles.createButton}
+                />
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit payment */}
+      <Modal
+        visible={!!editPaymentTx}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setEditPaymentTx(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit payment</Text>
+              <TouchableOpacity onPress={() => setEditPaymentTx(null)} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {editPaymentTx && (
+              <ScrollView style={styles.formContainer}>
+                <Text style={styles.label}>Amount (₹) *</Text>
+                <Input
+                  value={editPaymentTx.amount}
+                  onChangeText={(t) => setEditPaymentTx((m) => (m ? { ...m, amount: t } : m))}
+                  keyboardType="decimal-pad"
+                  style={styles.input}
+                />
+                <Text style={styles.label}>Date (YYYY-MM-DD) *</Text>
+                <Input
+                  value={editPaymentTx.date}
+                  onChangeText={(t) => setEditPaymentTx((m) => (m ? { ...m, date: t } : m))}
+                  style={styles.input}
+                />
+                <Text style={styles.label}>Notes</Text>
+                <Input
+                  value={editPaymentTx.notes}
+                  onChangeText={(t) => setEditPaymentTx((m) => (m ? { ...m, notes: t } : m))}
+                  style={styles.input}
+                />
+                <Button
+                  title={editPaymentLoading ? 'Saving...' : 'Save'}
+                  onPress={submitEditPayment}
+                  disabled={editPaymentLoading}
+                  style={styles.createButton}
+                />
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -1676,6 +2176,87 @@ const styles = StyleSheet.create({
   pendingAmountAdvance: {
     color: '#2E7D32',
   },
+  billingHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  billingHintLabel: {
+    fontSize: 12,
+    color: '#666',
+  },
+  billingHintValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#37474F',
+    marginLeft: 6,
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  billingModeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 8,
+  },
+  billingModeChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#E8E8E8',
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  billingModeChipActive: {
+    backgroundColor: '#1565C0',
+  },
+  billingModeChipText: {
+    fontSize: 13,
+    color: '#444',
+    fontWeight: '600',
+  },
+  billingModeChipTextActive: {
+    color: '#fff',
+  },
+  billsSection: {
+    marginBottom: 14,
+    padding: 12,
+    backgroundColor: '#F5F9FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E3F2FD',
+  },
+  billsSectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1565C0',
+    marginBottom: 8,
+  },
+  billEmpty: {
+    fontSize: 13,
+    color: '#666',
+  },
+  billCard: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#BBDEFB',
+  },
+  billPeriod: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+  },
+  billLine: {
+    fontSize: 12,
+    color: '#555',
+    marginTop: 4,
+  },
+  billDue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#C62828',
+    marginTop: 6,
+  },
   transactionsContainer: {
     marginTop: 15,
     paddingTop: 15,
@@ -1799,6 +2380,32 @@ const styles = StyleSheet.create({
     color: '#999',
     fontStyle: 'italic',
     marginTop: 4,
+  },
+  txActionRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  txActionBtn: {
+    marginRight: 16,
+    paddingVertical: 4,
+  },
+  txActionEdit: {
+    fontSize: 14,
+    color: '#1565C0',
+    fontWeight: '700',
+  },
+  txActionDel: {
+    fontSize: 14,
+    color: '#C62828',
+    fontWeight: '700',
+  },
+  addMilkSourceChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 12,
   },
   addButton: {
     backgroundColor: '#2196F3',

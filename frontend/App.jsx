@@ -178,7 +178,14 @@ function App() {
       case 'Milk Sales Report':
         return <MilkSalesReportScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Buyer':
-        return <BuyerScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
+        return (
+          <BuyerScreen
+            onNavigate={navigateToScreen}
+            onLogout={handleLogout}
+            initialFocusMobile={navParams?.Buyer?.focusMobile}
+            onConsumedFocusParam={() => setNavParams((p) => ({ ...p, Buyer: undefined }))}
+          />
+        );
       case 'Seller':
         return <SellerScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Admin List':

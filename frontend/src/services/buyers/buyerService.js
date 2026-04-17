@@ -58,5 +58,12 @@ export const buyerService = {
     const response = await apiClient.post(`/buyers/from-seller/${id}`);
     return response;
   },
+
+  /** Admin: list auto-generated monthly bills for a buyer */
+  getBillsForBuyer: async (buyerId) => {
+    const id = typeof buyerId === 'string' ? buyerId : (buyerId?.toString?.() || buyerId);
+    const response = await apiClient.get(`/bills/buyer/${id}`);
+    return Array.isArray(response) ? response : [];
+  },
 };
 

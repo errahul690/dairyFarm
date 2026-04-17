@@ -36,6 +36,9 @@ const listBuyers = async (req, res) => {
           deliveryDays: buyer.deliveryDays,
           deliveryCycleDays: buyer.deliveryCycleDays,
           deliveryCycleStartDate: buyer.deliveryCycleStartDate,
+          billingMode: buyer.billingMode,
+          billingDayOfMonth: buyer.billingDayOfMonth,
+          lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
           createdAt: buyer.createdAt,
           updatedAt: buyer.updatedAt,
         };
@@ -74,6 +77,9 @@ const getMyBuyerProfile = async (req, res) => {
       deliveryDays: buyer.deliveryDays,
       deliveryCycleDays: buyer.deliveryCycleDays,
       deliveryCycleStartDate: buyer.deliveryCycleStartDate,
+      billingMode: buyer.billingMode,
+      billingDayOfMonth: buyer.billingDayOfMonth,
+      lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
     });
   } catch (error) {
     console.error("[buyers] getMyBuyerProfile:", error);
@@ -152,7 +158,7 @@ const updateBuyer = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body || {};
-    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryItems", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate"];
+    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryItems", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate", "billingMode", "billingDayOfMonth"];
     const filtered = {};
     for (const key of allowed) {
       if (updates[key] !== undefined) filtered[key] = updates[key];
@@ -173,6 +179,42 @@ const updateBuyer = async (req, res) => {
     }
     if (filtered.deliveryCycleStartDate != null && typeof filtered.deliveryCycleStartDate === "string") {
       filtered.deliveryCycleStartDate = new Date(filtered.deliveryCycleStartDate);
+    }
+    if (filtered.billingMode !== undefined || filtered.billingDayOfMonth !== undefined) {
+      if (filtered.billingMode === null || filtered.billingMode === "") {
+        filtered.billingMode = null;
+        filtered.billingDayOfMonth = null;
+      } else if (filtered.billingMode === undefined && filtered.billingDayOfMonth !== undefined) {
+        if (filtered.billingDayOfMonth === null || filtered.billingDayOfMonth === "") {
+          filtered.billingMode = null;
+          filtered.billingDayOfMonth = null;
+        } else {
+          const bd = Number(filtered.billingDayOfMonth);
+          if (!Number.isInteger(bd) || bd < 1 || bd > 31) {
+            return res.status(400).json({ error: "billingDayOfMonth must be between 1 and 31" });
+          }
+          filtered.billingMode = "custom";
+          filtered.billingDayOfMonth = bd;
+        }
+      } else {
+        const bm = String(filtered.billingMode).trim();
+        if (!["daily", "month_end", "custom"].includes(bm)) {
+          return res.status(400).json({ error: "billingMode must be daily, month_end, or custom" });
+        }
+        filtered.billingMode = bm;
+        if (bm === "daily" || bm === "month_end") {
+          filtered.billingDayOfMonth = null;
+        } else {
+          if (filtered.billingDayOfMonth === null || filtered.billingDayOfMonth === "") {
+            return res.status(400).json({ error: "billingDayOfMonth is required when billingMode is custom" });
+          }
+          const bd = Number(filtered.billingDayOfMonth);
+          if (!Number.isInteger(bd) || bd < 1 || bd > 31) {
+            return res.status(400).json({ error: "billingDayOfMonth must be between 1 and 31" });
+          }
+          filtered.billingDayOfMonth = bd;
+        }
+      }
     }
     if (Object.keys(filtered).length === 0) {
       return res.status(400).json({ error: "No valid fields to update" });
@@ -195,6 +237,9 @@ const updateBuyer = async (req, res) => {
       deliveryDays: updated.deliveryDays,
       deliveryCycleDays: updated.deliveryCycleDays,
       deliveryCycleStartDate: updated.deliveryCycleStartDate,
+      billingMode: updated.billingMode,
+      billingDayOfMonth: updated.billingDayOfMonth,
+      lastBillingPeriodEnd: updated.lastBillingPeriodEnd,
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
     });

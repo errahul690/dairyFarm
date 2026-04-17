@@ -12,6 +12,7 @@ const { router: paymentsRouter } = require("./payments");
 const { router: notificationsRouter } = require("./notifications");
 const { router: deliveryOverrideRouter } = require("./deliveryOverride");
 const { router: settingsRouter } = require("./settings");
+const { router: billsRouter } = require("./bills");
 
 const appRouter = Router();
 
@@ -28,6 +29,7 @@ appRouter.use("/payments", paymentsRouter);
 appRouter.use("/notifications", notificationsRouter);
 appRouter.use("/delivery-overrides", deliveryOverrideRouter);
 appRouter.use("/settings", settingsRouter);
+appRouter.use("/bills", billsRouter);
 
 function registerRoutes(app) {
   app.use(appRouter);

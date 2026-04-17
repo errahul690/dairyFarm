@@ -25,6 +25,16 @@ function getStartOfTodayIST() {
   return new Date(Date.UTC(y, m, d, 0, 0, 0, 0));
 }
 
+/** Same instant style as getStartOfTodayIST for a calendar day YYYY-MM-DD (IST). */
+function getStartOfDayISTFromYmd(ymd) {
+  if (!ymd || typeof ymd !== "string") return null;
+  const s = ymd.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+}
+
 const milkTxSchema = z.object({
   date: z.string().datetime(),
   quantity: z.number().nonnegative(),
@@ -183,7 +193,9 @@ const quickSaleSchema = z.object({
   buyerMobile: z.string().min(10).max(10).regex(/^[0-9]+$/),
   quantity: z.number().positive().optional(),
   pricePerLiter: z.number().nonnegative().optional(),
-  milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional()
+  milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional(),
+  /** Optional sale calendar day YYYY-MM-DD (IST). Defaults to today. */
+  date: z.string().optional(),
 });
 
 /**
@@ -208,7 +220,7 @@ const createQuickSale = async (req, res) => {
     const buyer = await findBuyerByUserId(user._id);
     if (!buyer) return res.status(404).json({ error: "Buyer profile not found." });
 
-    const today = getStartOfTodayIST();
+    const saleDay = getStartOfDayISTFromYmd(parsed.data.date) || getStartOfTodayIST();
     const buyerName = user.name || buyer.name;
 
     // "Delivered" (no custom qty/rate): use deliveryItems if set, else single quantity/rate/milkSource
@@ -228,7 +240,7 @@ const createQuickSale = async (req, res) => {
           if (!q || !r) continue;
           const totalAmount = Math.round(q * r * 100) / 100;
           const payload = {
-            date: today.toISOString(),
+            date: saleDay.toISOString(),
             quantity: q,
             pricePerLiter: r,
             totalAmount,
@@ -269,7 +281,7 @@ const createQuickSale = async (req, res) => {
         ? String(buyer.milkSource).toLowerCase()
         : "cow";
     const payload = {
-      date: today.toISOString(),
+      date: saleDay.toISOString(),
       quantity,
       pricePerLiter,
       totalAmount,

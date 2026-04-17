@@ -65,6 +65,26 @@ const BuyerSchema = new mongoose.Schema({
     type: Date,
     required: false,
     default: undefined
+  },
+  /** How often to close a bill at 23:59 IST: daily | month_end | custom (specific calendar day) */
+  billingMode: {
+    type: String,
+    enum: ['daily', 'month_end', 'custom'],
+    required: false,
+    default: undefined,
+    trim: true,
+  },
+  /** For billingMode custom only: day of month 1–31 (clamped to month length) */
+  billingDayOfMonth: {
+    type: Number,
+    required: false,
+    default: undefined
+  },
+  /** End instant of last generated billing period (server-managed) */
+  lastBillingPeriodEnd: {
+    type: Date,
+    required: false,
+    default: undefined
   }
 }, {
   timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
@@ -111,7 +131,23 @@ async function getBuyerById(id) {
 }
 
 async function updateBuyerById(id, updates) {
-  return await Buyer.findByIdAndUpdate(id, { $set: updates }, { new: true });
+  const set = { ...updates };
+  const unset = {};
+  if (set.billingDayOfMonth === null) {
+    delete set.billingDayOfMonth;
+    unset.billingDayOfMonth = "";
+  }
+  if (set.billingMode === null) {
+    delete set.billingMode;
+    unset.billingMode = "";
+  }
+  const op = {};
+  if (Object.keys(set).length) op.$set = set;
+  if (Object.keys(unset).length) op.$unset = unset;
+  if (!op.$set && !op.$unset) {
+    return await Buyer.findById(id);
+  }
+  return await Buyer.findByIdAndUpdate(id, op, { new: true });
 }
 
 async function updateBuyer(userId, updates) {
