@@ -21,7 +21,7 @@ import { formatCurrency } from '../../utils/currencyUtils';
 import { authService } from '../../services/auth/authService';
 import { MILK_SOURCE_TYPES } from '../../constants';
 
-export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, onConsumedFocusParam }) {
+export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, onConsumedFocusParam, openEditOnFocus = false }) {
   const [transactions, setTransactions] = useState([]);
   const [payments, setPayments] = useState([]);
   const [buyersData, setBuyersData] = useState([]);
@@ -368,12 +368,21 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       setSelectedBuyer(m);
       setLogTab('milk');
       setPendingScrollToMobile(m);
+      if (openEditOnFocus) {
+        // Open edit modal once buyer list is ready (layout + buyers computed).
+        setTimeout(() => {
+          try {
+            const buyerObj = buyers.find((b) => String(b.phone || '').trim() === m);
+            if (buyerObj) openEditForm(buyerObj);
+          } catch (_) {}
+        }, 80);
+      }
       if (typeof onConsumedFocusParam === 'function') onConsumedFocusParam();
     })();
     return () => {
       cancelled = true;
     };
-  }, [initialFocusMobile]);
+  }, [initialFocusMobile, openEditOnFocus]);
 
   useEffect(() => {
     if (!pendingScrollToMobile) return;

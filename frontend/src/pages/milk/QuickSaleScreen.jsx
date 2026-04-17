@@ -237,6 +237,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
   const [buyers, setBuyers] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [overridesByDate, setOverridesByDate] = useState({});
+  const [balancesByMobile, setBalancesByMobile] = useState({});
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
   const [customModal, setCustomModal] = useState(null);
@@ -260,9 +261,40 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
 
       const ob = { [selectedDateYmd]: Array.isArray(overridesList) ? overridesList : [] };
 
-      setBuyers(Array.isArray(buyersList) ? buyersList : []);
+      const buyersArr = Array.isArray(buyersList) ? buyersList : [];
+      setBuyers(buyersArr);
       setTransactions(Array.isArray(txList) ? txList : []);
       setOverridesByDate(ob);
+
+      // Balance per buyer (pending due): sum of unpaid/partial sales.
+      // Note: This may call the API once per buyer (active list is usually small).
+      const mobiles = buyersArr.map((b) => String(b.mobile || '').trim()).filter(Boolean);
+      const uniqueMobiles = Array.from(new Set(mobiles));
+      if (uniqueMobiles.length > 0) {
+        const entries = await Promise.all(
+          uniqueMobiles.map(async (m) => {
+            try {
+              const unpaid = await milkService.getUnpaidTransactions(m).catch(() => []);
+              const due = (unpaid || []).reduce((sum, tx) => {
+                const total = Number(tx.totalAmount) || 0;
+                const paid = Number(tx.paidAmount) || 0;
+                const rem = total - paid;
+                return sum + (rem > 0 ? rem : 0);
+              }, 0);
+              return [m, Math.round(due * 100) / 100];
+            } catch (_) {
+              return [m, null];
+            }
+          })
+        );
+        const map = {};
+        entries.forEach(([m, due]) => {
+          map[m] = due;
+        });
+        setBalancesByMobile(map);
+      } else {
+        setBalancesByMobile({});
+      }
     } catch (e) {
       if (!silent) Alert.alert('Error', 'Failed to load data.');
     } finally {
@@ -660,15 +692,43 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           {buyersSorted.map((b) => (
             <View key={b.mobile} style={styles.tableRow}>
               <View style={[styles.nameCell, { width: NAME_COL_W, minHeight: ROW_MIN_H }]}>
-                <TouchableOpacity
-                  onPress={() => onNavigate('Buyer', { focusMobile: String(b.mobile || '').trim() })}
-                  activeOpacity={0.7}
-                  disabled={!String(b.mobile || '').trim()}
-                >
-                  <Text style={styles.nameTextLink} numberOfLines={3}>
-                    {b.name}
-                  </Text>
-                </TouchableOpacity>
+                <View style={styles.nameCellTopRow}>
+                  <TouchableOpacity
+                    onPress={() => onNavigate('Buyer', { focusMobile: String(b.mobile || '').trim() })}
+                    activeOpacity={0.7}
+                    disabled={!String(b.mobile || '').trim()}
+                    style={{ flex: 1 }}
+                  >
+                    <Text style={styles.nameTextLink} numberOfLines={3}>
+                      {b.name}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => onNavigate('Buyer', { focusMobile: String(b.mobile || '').trim(), openEdit: true })}
+                    disabled={!String(b.mobile || '').trim()}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.buyerEditLink}>Edit</Text>
+                  </TouchableOpacity>
+                </View>
+                {String(b.mobile || '').trim() ? (
+                  <>
+                    <Text style={styles.buyerMobileText} numberOfLines={1}>
+                      {String(b.mobile || '').trim()}
+                    </Text>
+                    {balancesByMobile[String(b.mobile || '').trim()] != null && (
+                      <Text
+                        style={[
+                          styles.buyerBalanceText,
+                          balancesByMobile[String(b.mobile || '').trim()] > 0 ? styles.buyerBalanceDue : styles.buyerBalanceClear,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        Balance: ₹{Number(balancesByMobile[String(b.mobile || '').trim()] || 0).toFixed(0)}
+                      </Text>
+                    )}
+                  </>
+                ) : null}
               </View>
               <View style={styles.cellWrap}>{renderCell(b)}</View>
             </View>
@@ -1055,6 +1115,12 @@ const styles = StyleSheet.create({
   },
   nameText: { fontSize: 12, fontWeight: '600', color: '#333' },
   nameTextLink: { fontSize: 12, fontWeight: '600', color: '#1565C0', textDecorationLine: 'underline' },
+  nameCellTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  buyerEditLink: { fontSize: 12, color: '#2e7d32', fontWeight: '800' },
+  buyerMobileText: { marginTop: 2, fontSize: 11, color: '#666' },
+  buyerBalanceText: { marginTop: 2, fontSize: 11, fontWeight: '700' },
+  buyerBalanceDue: { color: '#c62828' },
+  buyerBalanceClear: { color: '#2e7d32' },
   customLinesScroll: { maxHeight: 320, marginBottom: 8 },
   customLineCard: {
     borderWidth: 1,

@@ -185,6 +185,7 @@ function App() {
             onLogout={handleLogout}
             initialFocusMobile={navParams?.Buyer?.focusMobile}
             onConsumedFocusParam={() => setNavParams((p) => ({ ...p, Buyer: undefined }))}
+            openEditOnFocus={!!navParams?.Buyer?.openEdit}
           />
         );
       case 'Seller':
