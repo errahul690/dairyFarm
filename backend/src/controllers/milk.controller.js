@@ -207,8 +207,21 @@ const quickSaleSchema = z.object({
  * When buyer has deliveryItems, "Delivered" creates one transaction per item.
  */
 const createQuickSale = async (req, res) => {
+  // Debug: helps confirm whether server is receiving and using requested calendar day.
+  // Safe to keep in production (doesn't log token); can be removed later if noisy.
+  console.log("[milk quick-sale] Incoming body:", {
+    buyerMobile: req?.body?.buyerMobile,
+    date: req?.body?.date,
+    quantity: req?.body?.quantity,
+    pricePerLiter: req?.body?.pricePerLiter,
+    milkSource: req?.body?.milkSource,
+  });
+
   const parsed = quickSaleSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!parsed.success) {
+    console.warn("[milk quick-sale] Validation failed:", parsed.error.flatten());
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
 
   const buyerMobile = parsed.data.buyerMobile.trim();
   let quantity = parsed.data.quantity;
@@ -225,6 +238,13 @@ const createQuickSale = async (req, res) => {
     const rawDate = parsed.data.date;
     const saleDayFromBody = getStartOfDayISTFromYmd(rawDate);
     const saleDay = saleDayFromBody || getStartOfTodayIST();
+    console.log("[milk quick-sale] Parsed:", {
+      buyerMobile,
+      rawDate,
+      saleDayFromBody: saleDayFromBody ? saleDayFromBody.toISOString() : null,
+      saleDayUsed: saleDay.toISOString(),
+      usedFallbackToday: !saleDayFromBody,
+    });
     if (!saleDayFromBody && rawDate != null && String(rawDate).trim() !== "") {
       console.warn("[milk quick-sale] Invalid date in body; using IST today:", { rawDate });
     }
@@ -266,6 +286,12 @@ const createQuickSale = async (req, res) => {
             error: "Buyer deliveryItems have no valid quantity/rate. Add at least one milk type with quantity and rate.",
           });
         }
+        console.log("[milk quick-sale] Saved delivered items:", {
+          count: transactions.length,
+          dateUsed: saleDay.toISOString(),
+          dateYmd: saleDay.toISOString().slice(0, 10),
+          buyerMobile,
+        });
         return res.status(201).json({ transactions });
       }
 
@@ -301,8 +327,16 @@ const createQuickSale = async (req, res) => {
     };
 
     const tx = await addMilkTransaction({ type: "sale", ...payload });
+    console.log("[milk quick-sale] Saved single tx:", {
+      txId: tx?._id?.toString?.() || tx?._id,
+      dateUsed: saleDay.toISOString(),
+      dateYmd: saleDay.toISOString().slice(0, 10),
+      storedDate: tx?.date ? new Date(tx.date).toISOString() : null,
+      buyerMobile,
+    });
     return res.status(201).json(tx);
   } catch (error) {
+    console.error("[milk quick-sale] Error:", error);
     return res.status(500).json({ error: error.message || "Failed to create quick sale" });
   }
 };
