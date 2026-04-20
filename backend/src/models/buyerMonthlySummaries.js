@@ -62,8 +62,12 @@ async function listMonthlySummariesForBuyer(buyerId, limit = 24) {
     .lean();
 }
 
-async function listMonthlySummariesByMonthKey(userId, monthKey, limit = 5000) {
-  return BuyerMonthlySummary.find({ userId, monthKey: String(monthKey || "").trim() })
+async function listMonthlySummariesByMonthKey(monthKey, buyerIds = null, limit = 5000) {
+  const filter = { monthKey: String(monthKey || "").trim() };
+  if (Array.isArray(buyerIds) && buyerIds.length > 0) {
+    filter.buyerId = { $in: buyerIds };
+  }
+  return BuyerMonthlySummary.find(filter)
     .limit(Math.min(10000, Math.max(1, limit)))
     .lean();
 }

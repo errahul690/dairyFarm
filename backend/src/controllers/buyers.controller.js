@@ -146,8 +146,8 @@ const listBuyerMonthlySummariesByMonthKeyController = async (req, res) => {
     if (!(req.user?.role === 0 || req.user?.role === 1)) {
       return res.status(403).json({ error: "Only admins can access this" });
     }
-    const userId = req.user?.userId || req.user?._id;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const adminUserId = req.user?.userId || req.user?._id;
+    if (!adminUserId) return res.status(401).json({ error: "Unauthorized" });
 
     const monthKey = String(req.query.monthKey || "").trim();
     if (!/^\d{4}-\d{2}$/.test(monthKey)) {
@@ -157,14 +157,14 @@ const listBuyerMonthlySummariesByMonthKeyController = async (req, res) => {
     const activeOnly = req.query.active === "true";
     const limit = Math.min(10000, Math.max(1, parseInt(String(req.query.limit || "5000"), 10) || 5000));
 
-    let list = await listMonthlySummariesByMonthKey(userId, monthKey, limit);
-    list = Array.isArray(list) ? list : [];
-
+    let buyerIds = null;
     if (activeOnly) {
       const buyers = await getAllBuyers({ active: true });
-      const allowed = new Set((buyers || []).map((b) => String(b._id)));
-      list = list.filter((s) => allowed.has(String(s.buyerId)));
+      buyerIds = (buyers || []).map((b) => b._id);
     }
+
+    let list = await listMonthlySummariesByMonthKey(monthKey, buyerIds, limit);
+    list = Array.isArray(list) ? list : [];
 
     return res.json(list);
   } catch (error) {
