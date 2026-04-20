@@ -10,20 +10,24 @@ const TREND_PERIOD_LABELS = {
   yearly: "Yearly"
 };
 
+const IST_TIMEZONE = "Asia/Kolkata";
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+
 const trendLabelFormatters = {
-  weekly: new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" }),
-  monthly: new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short" }),
-  yearly: new Intl.DateTimeFormat("en-IN", { month: "short" })
+  weekly: new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: IST_TIMEZONE }),
+  monthly: new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: IST_TIMEZONE }),
+  yearly: new Intl.DateTimeFormat("en-IN", { month: "short", timeZone: IST_TIMEZONE })
 };
 
-function getUtcDayRange(reference = new Date()) {
-  const start = new Date(
-    Date.UTC(reference.getUTCFullYear(), reference.getUTCMonth(), reference.getUTCDate())
-  );
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 1);
-  end.setUTCMilliseconds(end.getUTCMilliseconds() - 1);
-  return { start, end };
+/**
+ * Return [start,end] for an IST calendar day as UTC instants.
+ * This avoids "day shift" bugs when server runs in UTC.
+ */
+function getIstDayRange(reference = new Date()) {
+  const ist = new Date(reference.getTime() + IST_OFFSET_MS);
+  const startMs = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - IST_OFFSET_MS;
+  const endMs = startMs + 24 * 60 * 60 * 1000 - 1;
+  return { start: new Date(startMs), end: new Date(endMs) };
 }
 
 function normalizeBuyerMobile(mobile) {
@@ -64,7 +68,11 @@ function getTrendConfig(period, todayRange) {
   }
 
   if (normalizedPeriod === "yearly") {
-    const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+    // Start from current IST month (as UTC instant), then go back 11 months.
+    const istEnd = new Date(end.getTime() + IST_OFFSET_MS);
+    const currentIstMonthStartMs =
+      Date.UTC(istEnd.getUTCFullYear(), istEnd.getUTCMonth(), 1) - IST_OFFSET_MS;
+    const start = new Date(currentIstMonthStartMs);
     start.setUTCMonth(start.getUTCMonth() - 11);
     return {
       period: normalizedPeriod,
@@ -193,7 +201,8 @@ async function aggregateTrendData({ start, end, unit, buyerMobile }) {
         dateKey: {
           $dateToString: {
             format,
-            date: "$date"
+            date: "$date",
+            timezone: IST_TIMEZONE
           }
         }
       }
@@ -275,18 +284,16 @@ const getProfitLoss = (req, res) => {
 
 async function getDashboardSummary(req, res) {
   try {
-    const todayRange = getUtcDayRange(new Date());
+    const todayRange = getIstDayRange(new Date());
     const trendPeriod = String(req.query.trendPeriod || "weekly").toLowerCase();
     const normalizedTrend = TREND_PERIOD_LABELS[trendPeriod]
       ? trendPeriod
       : "weekly";
     const trendConfig = getTrendConfig(normalizedTrend, todayRange);
-    const monthlyStart = new Date(
-      Date.UTC(todayRange.start.getUTCFullYear(), todayRange.start.getUTCMonth(), 1)
-    );
-    const yearlyStart = new Date(
-      Date.UTC(todayRange.start.getUTCFullYear(), 0, 1)
-    );
+    // Compute IST month/year start instants (UTC timestamps).
+    const istStart = new Date(todayRange.start.getTime() + IST_OFFSET_MS);
+    const monthlyStart = new Date(Date.UTC(istStart.getUTCFullYear(), istStart.getUTCMonth(), 1) - IST_OFFSET_MS);
+    const yearlyStart = new Date(Date.UTC(istStart.getUTCFullYear(), 0, 1) - IST_OFFSET_MS);
 
     const normalizedBuyerMobile = normalizeBuyerMobile(req.query.buyerMobile);
 

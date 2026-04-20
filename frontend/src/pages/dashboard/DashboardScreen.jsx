@@ -33,6 +33,23 @@ const trendOptions = [
   { value: 'yearly', label: 'Yearly' },
 ];
 
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
+function getIstStartOfDayUtcInstant(now = new Date()) {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const startMs = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - IST_OFFSET_MS;
+  return new Date(startMs);
+}
+function getIstStartOfMonthUtcInstant(now = new Date()) {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const startMs = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - IST_OFFSET_MS;
+  return new Date(startMs);
+}
+function getIstStartOfYearUtcInstant(now = new Date()) {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const startMs = Date.UTC(ist.getUTCFullYear(), 0, 1) - IST_OFFSET_MS;
+  return new Date(startMs);
+}
+
 export default function DashboardScreen({ onNavigate, onLogout }) {
   const [summary, setSummary] = useState(null);
   const [paymentSummary, setPaymentSummary] = useState({ daily: 0, monthly: 0, yearly: 0 });
@@ -86,9 +103,9 @@ export default function DashboardScreen({ onNavigate, onLogout }) {
         if (!isMounted) return;
 
         const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const yearStart = new Date(now.getFullYear(), 0, 1);
+        const todayStart = getIstStartOfDayUtcInstant(now);
+        const monthStart = getIstStartOfMonthUtcInstant(now);
+        const yearStart = getIstStartOfYearUtcInstant(now);
 
         let dailyTotal = 0;
         let monthlyTotal = 0;
