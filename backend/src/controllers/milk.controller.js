@@ -13,6 +13,7 @@ const {
   MilkTransaction,
   findBuyerByUserId,
 } = require("../models");
+const { rebuildBuyerBalanceAndMonthly } = require("../services/buyerBalance.service");
 
 /** Start of today in India (IST). Returns midnight UTC on the IST calendar day so toISOString().slice(0,10) shows correct date (e.g. 24 Feb 07:30 IST → 2026-02-24). */
 function getStartOfTodayIST() {
@@ -145,6 +146,10 @@ const createMilkSale = async (req, res) => {
     }
     const requestSource = req.user?.role === 2 ? "buyer_app" : "admin";
     const tx = await addMilkTransaction({ type: "sale", requestSource, ...normalizedData });
+    // Rebuild buyer balance/monthly (safe strategy) if we can identify buyer.
+    if (tx?.buyerId) {
+      rebuildBuyerBalanceAndMonthly(tx.buyerId).catch(() => {});
+    }
 
     if (requestSource === "buyer_app") {
       await createNotification({
@@ -279,6 +284,7 @@ const createQuickSale = async (req, res) => {
             milkSource: src,
           };
           const tx = await addMilkTransaction({ type: "sale", ...payload });
+          if (tx?.buyerId) rebuildBuyerBalanceAndMonthly(tx.buyerId).catch(() => {});
           transactions.push(tx);
         }
         if (transactions.length === 0) {
@@ -327,6 +333,7 @@ const createQuickSale = async (req, res) => {
     };
 
     const tx = await addMilkTransaction({ type: "sale", ...payload });
+    if (tx?.buyerId) rebuildBuyerBalanceAndMonthly(tx.buyerId).catch(() => {});
     console.log("[milk quick-sale] Saved single tx:", {
       txId: tx?._id?.toString?.() || tx?._id,
       dateUsed: saleDay.toISOString(),
@@ -429,6 +436,7 @@ const updateMilkTransaction = async (req, res) => {
     }
     
     console.log("[milk] Transaction updated successfully:", updatedTx._id);
+    if (existingTx?.buyerId) rebuildBuyerBalanceAndMonthly(existingTx.buyerId).catch(() => {});
     return res.json(updatedTx);
   } catch (error) {
     console.error("[milk] Error updating transaction:", error);
@@ -464,6 +472,7 @@ const deleteMilkTransactionRecord = async (req, res) => {
     }
 
     await deleteMilkTransaction(id);
+    if (existingTx?.buyerId) rebuildBuyerBalanceAndMonthly(existingTx.buyerId).catch(() => {});
     return res.json({ message: "Transaction deleted successfully" });
   } catch (error) {
     console.error("[milk] Error deleting transaction:", error);

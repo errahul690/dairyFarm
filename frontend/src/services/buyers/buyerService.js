@@ -65,5 +65,19 @@ export const buyerService = {
     const response = await apiClient.get(`/bills/buyer/${id}`);
     return Array.isArray(response) ? response : [];
   },
+
+  /** Admin: stored buyer balances (pending = total milk - total payments). */
+  getBuyerBalances: async (activeOnly = false) => {
+    const url = activeOnly ? '/buyers/balances?active=true' : '/buyers/balances';
+    const response = await apiClient.get(url);
+    return Array.isArray(response) ? response : [];
+  },
+
+  /** Admin: stored month summaries for buyer (opening/in/out/closing). */
+  getBuyerMonthlySummaries: async (buyerId, limit = 24) => {
+    const id = typeof buyerId === 'string' ? buyerId : (buyerId?.toString?.() || buyerId);
+    const response = await apiClient.get(`/buyers/${id}/monthly?limit=${encodeURIComponent(String(limit))}`);
+    return Array.isArray(response) ? response : [];
+  },
 };
 

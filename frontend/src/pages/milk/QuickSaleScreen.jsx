@@ -253,10 +253,11 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       const first = selectedDateYmd;
       const toExclusive = addDaysYmd(selectedDateYmd, 1);
 
-      const [buyersList, txList, overridesList] = await Promise.all([
+      const [buyersList, txList, overridesList, balances] = await Promise.all([
         buyerService.getBuyers(true),
         milkService.getTransactions(first, toExclusive, 2000, 0, 'sale'),
         deliveryOverrideService.getOverridesForDate(selectedDateYmd).catch(() => []),
+        buyerService.getBuyerBalances(true).catch(() => []),
       ]);
 
       const ob = { [selectedDateYmd]: Array.isArray(overridesList) ? overridesList : [] };
@@ -266,35 +267,14 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       setTransactions(Array.isArray(txList) ? txList : []);
       setOverridesByDate(ob);
 
-      // Balance per buyer (pending due): sum of unpaid/partial sales.
-      // Note: This may call the API once per buyer (active list is usually small).
-      const mobiles = buyersArr.map((b) => String(b.mobile || '').trim()).filter(Boolean);
-      const uniqueMobiles = Array.from(new Set(mobiles));
-      if (uniqueMobiles.length > 0) {
-        const entries = await Promise.all(
-          uniqueMobiles.map(async (m) => {
-            try {
-              const unpaid = await milkService.getUnpaidTransactions(m).catch(() => []);
-              const due = (unpaid || []).reduce((sum, tx) => {
-                const total = Number(tx.totalAmount) || 0;
-                const paid = Number(tx.paidAmount) || 0;
-                const rem = total - paid;
-                return sum + (rem > 0 ? rem : 0);
-              }, 0);
-              return [m, Math.round(due * 100) / 100];
-            } catch (_) {
-              return [m, null];
-            }
-          })
-        );
-        const map = {};
-        entries.forEach(([m, due]) => {
-          map[m] = due;
-        });
-        setBalancesByMobile(map);
-      } else {
-        setBalancesByMobile({});
-      }
+      const list = Array.isArray(balances) ? balances : [];
+      const map = {};
+      list.forEach((b) => {
+        const m = String(b.buyerMobile || '').trim();
+        if (!m) return;
+        map[m] = Number(b.pendingAmount) || 0;
+      });
+      setBalancesByMobile(map);
     } catch (e) {
       if (!silent) Alert.alert('Error', 'Failed to load data.');
     } finally {
@@ -724,7 +704,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                         ]}
                         numberOfLines={1}
                       >
-                        Balance: ₹{Number(balancesByMobile[String(b.mobile || '').trim()] || 0).toFixed(0)}
+                        Pending: ₹{Number(balancesByMobile[String(b.mobile || '').trim()] || 0).toFixed(0)}
                       </Text>
                     )}
                   </>

@@ -3,6 +3,8 @@ const PDFDocument = require("pdfkit-table");
 const { createPayment, getAllPayments, getPaymentById, updatePayment, deletePayment, getSettlementPayments } = require("../models/payments");
 const { User } = require("../models/users");
 const { getUnpaidMilkTransactions, getUnpaidMilkTransactionsForSeller, updateMilkTransactionPayment, MilkTransaction } = require("../models/milk");
+const { Buyer } = require("../models/buyers");
+const { rebuildBuyerBalanceAndMonthly } = require("../services/buyerBalance.service");
 const paymentSchema = z.object({
   customerId: z.string().min(1, "Customer ID is required"),
   customerName: z.string().min(1, "Customer name is required"),
@@ -117,6 +119,11 @@ const createPaymentRecord = async (req, res) => {
       await payment.save();
     }
     
+    // Rebuild buyer balance/monthly for this customer (if they are a Buyer).
+    try {
+      const buyer = await Buyer.findOne({ userId: payment.customerId });
+      if (buyer) rebuildBuyerBalanceAndMonthly(buyer._id).catch(() => {});
+    } catch (_) {}
     const user = req.user;
     return res.status(201).json(payment);
   } catch (error) {
@@ -177,6 +184,10 @@ const updatePaymentRecord = async (req, res) => {
     if (req.body.referenceNumber !== undefined) updates.referenceNumber = req.body.referenceNumber;
 
     const updated = await updatePayment(id, updates);
+    try {
+      const buyer = await Buyer.findOne({ userId: payment.customerId });
+      if (buyer) rebuildBuyerBalanceAndMonthly(buyer._id).catch(() => {});
+    } catch (_) {}
     return res.json(updated);
   } catch (error) {
     console.error("[payments] Error updating payment:", error);
@@ -200,6 +211,10 @@ const deletePaymentRecord = async (req, res) => {
     }
 
     await deletePayment(id);
+    try {
+      const buyer = await Buyer.findOne({ userId: payment.customerId });
+      if (buyer) rebuildBuyerBalanceAndMonthly(buyer._id).catch(() => {});
+    } catch (_) {}
     return res.json({ message: "Payment deleted successfully" });
   } catch (error) {
     console.error("[payments] Error deleting payment:", error);

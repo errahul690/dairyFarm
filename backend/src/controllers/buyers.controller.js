@@ -1,6 +1,9 @@
 const { getAllBuyers, getBuyerById, updateBuyerById, findBuyerByUserId, addBuyer, updateBuyer: updateBuyerModel } = require("../models/buyers");
 const { findSellerByUserId, getSellerById } = require("../models/sellers");
 const { User } = require("../models/users");
+const { getBuyerBalanceByBuyerId, listBuyerBalances } = require("../models/buyerBalances");
+const { listMonthlySummariesForBuyer } = require("../models/buyerMonthlySummaries");
+const { rebuildBuyerBalanceAndMonthly } = require("../services/buyerBalance.service");
 
 /**
  * Get all buyers with user details
@@ -292,11 +295,66 @@ const createBuyerFromSeller = async (req, res) => {
   }
 };
 
+/**
+ * Admin: list buyer balances (stored).
+ * GET /buyers/balances?active=true
+ */
+const listBuyerBalancesController = async (req, res) => {
+  try {
+    const activeOnly = req.query.active === "true";
+    const buyers = await getAllBuyers(activeOnly ? { active: true } : {});
+    const buyerIds = buyers.map((b) => b._id);
+    const balances = await listBuyerBalances({ buyerId: { $in: buyerIds } });
+    return res.json(balances);
+  } catch (error) {
+    console.error("[buyers] listBuyerBalances:", error);
+    return res.status(500).json({ error: "Failed to fetch buyer balances", message: error.message });
+  }
+};
+
+/**
+ * Admin: get monthly summaries for buyer.
+ * GET /buyers/:id/monthly?limit=24
+ */
+const getBuyerMonthlySummariesController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = Math.min(120, Math.max(1, parseInt(String(req.query.limit || "24"), 10) || 24));
+    const buyer = await getBuyerById(id);
+    if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+    const list = await listMonthlySummariesForBuyer(buyer._id, limit);
+    return res.json(list);
+  } catch (error) {
+    console.error("[buyers] getBuyerMonthlySummaries:", error);
+    return res.status(500).json({ error: "Failed to fetch buyer monthly summaries", message: error.message });
+  }
+};
+
+/**
+ * Admin: force rebuild buyer balance/monthly from source-of-truth.
+ * POST /buyers/:id/rebuild-balance
+ */
+const rebuildBuyerBalanceController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const buyer = await getBuyerById(id);
+    if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+    const doc = await rebuildBuyerBalanceAndMonthly(buyer._id);
+    return res.json({ ok: true, balance: doc });
+  } catch (error) {
+    console.error("[buyers] rebuildBuyerBalance:", error);
+    return res.status(500).json({ error: "Failed to rebuild balance", message: error.message });
+  }
+};
+
 module.exports = {
   listBuyers,
   getMyBuyerProfile,
   updateMyBuyerProfile,
   updateBuyer,
   createBuyerFromSeller,
+  listBuyerBalancesController,
+  getBuyerMonthlySummariesController,
+  rebuildBuyerBalanceController,
 };
 

@@ -4,6 +4,8 @@ module.exports = {
   ...require("./chara"),
   ...require("./users"),
   ...require("./buyers"),
+  ...require("./buyerBalances"),
+  ...require("./buyerMonthlySummaries"),
   ...require("./sellers"),
   ...require("./whatsappMessage"),
   ...require("./payments"),

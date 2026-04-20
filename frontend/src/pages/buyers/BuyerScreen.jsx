@@ -27,7 +27,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
   const [buyersData, setBuyersData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedBuyer, setSelectedBuyer] = useState(null);
-  const [logTab, setLogTab] = useState('milk'); // 'milk' | 'payments' for expanded buyer logs
+  const [monthTabByBuyer, setMonthTabByBuyer] = useState({}); // { [mobile]: 'YYYY-MM' }
   const [showAddForm, setShowAddForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [editingBuyer, setEditingBuyer] = useState(null);
@@ -75,28 +75,19 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     setPendingScrollToMobile(null);
   }, []);
 
-  // Date range for period pending (e.g. 10 to 9 billing)
-  const getDefaultDateRange = () => {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = d.getMonth();
-    const day = d.getDate();
-    let from, to;
-    if (day < 10) {
-      from = new Date(y, m - 1, 10);
-      to = new Date(y, m, 9);
-    } else {
-      from = new Date(y, m, 10);
-      to = new Date(y, m + 1, 9);
-      if (to > d) to = new Date(d);
-    }
-    return {
-      from: from.getFullYear() + '-' + String(from.getMonth() + 1).padStart(2, '0') + '-' + String(from.getDate()).padStart(2, '0'),
-      to: to.getFullYear() + '-' + String(to.getMonth() + 1).padStart(2, '0') + '-' + String(to.getDate()).padStart(2, '0'),
-    };
+  const monthKeyFromDate = (d) => {
+    const dt = d instanceof Date ? d : new Date(d);
+    if (isNaN(dt.getTime())) return '';
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    return `${y}-${m}`;
   };
-  const [dateFrom, setDateFrom] = useState(() => getDefaultDateRange().from);
-  const [dateTo, setDateTo] = useState(() => getDefaultDateRange().to);
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthLabel = (monthKey) => {
+    const [y, m] = String(monthKey || '').split('-').map(Number);
+    if (!y || !m) return String(monthKey || '');
+    return `${MONTHS[m - 1]} ${y}`;
+  };
 
   const canEditUsers = currentUser?.role === 0 || currentUser?.role === 1;
 
@@ -366,7 +357,6 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       if (cancelled) return;
       setBuyerFilterTab('active');
       setSelectedBuyer(m);
-      setLogTab('milk');
       setPendingScrollToMobile(m);
       if (openEditOnFocus) {
         // Open edit modal once buyer list is ready (layout + buyers computed).
@@ -394,14 +384,31 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [txData, buyersList, paymentData] = await Promise.all([
-        milkService.getTransactions(),
+      const [buyersList, balances, paymentData, txData] = await Promise.all([
         buyerService.getBuyers().catch(() => []),
+        buyerService.getBuyerBalances(false).catch(() => []),
         paymentService.getPayments().catch(() => []),
+        // Keep existing transactions load for now (used for detailed lists); will be replaced by per-buyer month fetch next.
+        milkService.getTransactions(null, null, 5000, 0, 'sale').catch(() => []),
       ]);
-      setTransactions(txData);
-      setBuyersData(buyersList);
-      setPayments(paymentData);
+      setTransactions(Array.isArray(txData) ? txData : []);
+      setBuyersData(Array.isArray(buyersList) ? buyersList : []);
+      setPayments(Array.isArray(paymentData) ? paymentData : []);
+      // Merge stored balances into buyersData by mobile for list display.
+      const balMap = {};
+      (Array.isArray(balances) ? balances : []).forEach((b) => {
+        const m = String(b.buyerMobile || '').trim();
+        if (!m) return;
+        balMap[m] = Number(b.pendingAmount) || 0;
+      });
+      setBuyersData((prev) =>
+        (Array.isArray(prev) ? prev : []).map((b) => {
+          const mobile = String(b.mobile || '').trim();
+          if (!mobile) return b;
+          if (balMap[mobile] == null) return b;
+          return { ...b, pendingBalance: balMap[mobile] };
+        })
+      );
     } catch (error) {
       console.error('Failed to load data:', error);
       if (!silent) Alert.alert('Error', 'Failed to load buyer data. Please try again.');
@@ -439,6 +446,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
           billingMode: buyer.billingMode,
           billingDayOfMonth: buyer.billingDayOfMonth,
           lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
+          pendingBalanceFromApi: buyer.pendingBalance != null ? Number(buyer.pendingBalance) : null,
         });
       }
     });
@@ -471,7 +479,9 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       const totalPaid = (payments || [])
         .filter((p) => String(p.customerMobile || '').trim() === phone)
         .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      buyer.pendingBalance = (buyer.totalAmount || 0) - totalPaid;
+      buyer.pendingBalance = buyer.pendingBalanceFromApi != null
+        ? buyer.pendingBalanceFromApi
+        : (buyer.totalAmount || 0) - totalPaid;
     });
 
     // Sort A-Z by name for easy finding
@@ -482,28 +492,6 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     () => buyers.filter((b) => (buyerFilterTab === 'active' ? b.active : !b.active)),
     [buyers, buyerFilterTab]
   );
-
-  // Period pending: for date range [dateFrom, dateTo], milk sales - payments received (from_buyer)
-  const periodPendingTotal = useMemo(() => {
-    const from = new Date(dateFrom);
-    const to = new Date(dateTo);
-    from.setHours(0, 0, 0, 0);
-    to.setHours(23, 59, 59, 999);
-    if (isNaN(from.getTime()) || isNaN(to.getTime()) || from > to) return 0;
-    let totalMilk = 0;
-    let totalPaid = 0;
-    (transactions || []).forEach((tx) => {
-      if (tx.type !== 'sale' || !tx.buyerPhone) return;
-      const txDate = new Date(tx.date);
-      if (txDate >= from && txDate <= to) totalMilk += Number(tx.totalAmount) || 0;
-    });
-    (payments || []).forEach((p) => {
-      if (p.paymentDirection && p.paymentDirection !== 'from_buyer') return;
-      const pDate = p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate);
-      if (pDate >= from && pDate <= to) totalPaid += Number(p.amount) || 0;
-    });
-    return Math.max(0, totalMilk - totalPaid);
-  }, [transactions, payments, dateFrom, dateTo]);
 
   const getBuyerTransactions = (phone) => {
     return transactions
@@ -828,32 +816,6 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
         isAuthenticated={true}
         onLogout={onLogout}
       />
-      <View style={styles.dateRangeStrip}>
-        <View style={styles.dateRangeRow}>
-          <View style={styles.dateField}>
-            <Text style={styles.dateLabel}>From</Text>
-            <Input
-              value={dateFrom}
-              onChangeText={setDateFrom}
-              placeholder="YYYY-MM-DD"
-              style={styles.dateInput}
-            />
-          </View>
-          <View style={styles.dateField}>
-            <Text style={styles.dateLabel}>To</Text>
-            <Input
-              value={dateTo}
-              onChangeText={setDateTo}
-              placeholder="YYYY-MM-DD"
-              style={styles.dateInput}
-            />
-          </View>
-        </View>
-        <View style={styles.periodTotalRow}>
-          <Text style={styles.periodTotalLabel}>Payment to collect (period)</Text>
-          <Text style={styles.periodTotalAmount}>{formatCurrency(periodPendingTotal)}</Text>
-        </View>
-      </View>
       <ScrollView style={styles.content} ref={contentScrollRef}>
         <TouchableOpacity
           style={styles.addButton}
@@ -931,7 +893,14 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                         setSelectedBuyer(null);
                       } else {
                         setSelectedBuyer(buyer.phone);
-                        setLogTab('milk');
+                        // Default to most recent month with any entry (milk/payments).
+                        const combinedDates = [
+                          ...(buyerTransactions || []).map((t) => new Date(t.date)),
+                          ...(buyerPaymentTransactions || []).map((p) => (p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate))),
+                        ].filter((d) => d instanceof Date && !isNaN(d.getTime()));
+                        const latest = combinedDates.sort((a, b) => b.getTime() - a.getTime())[0];
+                        const mk = latest ? monthKeyFromDate(latest) : '';
+                        if (mk) setMonthTabByBuyer((m) => ({ ...m, [buyer.phone]: mk }));
                         if (canEditUsers && buyer._id) {
                           buyerService.getBillsForBuyer(buyer._id).then((list) => {
                             setBuyerBillsCache((c) => ({ ...c, [String(buyer._id)]: Array.isArray(list) ? list : [] }));
@@ -1091,26 +1060,173 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
 
                   {isExpanded && (
                     <View style={styles.transactionsContainer}>
-                      <View style={styles.logTabs}>
-                        <TouchableOpacity
-                          style={[styles.logTab, logTab === 'milk' && styles.logTabActive]}
-                          onPress={() => setLogTab('milk')}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.logTabText, logTab === 'milk' && styles.logTabTextActive]}>
-                            Milk Transactions ({buyerTransactions.length})
-                          </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.logTab, logTab === 'payments' && styles.logTabActive]}
-                          onPress={() => setLogTab('payments')}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.logTabText, logTab === 'payments' && styles.logTabTextActive]}>
-                            Payment Transactions ({buyerPaymentTransactions.length})
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
+                      {(() => {
+                        const phone = String(buyer.phone || '').trim();
+                        const milkList = buyerTransactions || [];
+                        const payList = buyerPaymentTransactions || [];
+
+                        const monthKeysSet = new Set();
+                        milkList.forEach((t) => monthKeysSet.add(monthKeyFromDate(t.date)));
+                        payList.forEach((p) => monthKeysSet.add(monthKeyFromDate(p.paymentDate)));
+                        const monthKeys = Array.from(monthKeysSet).filter(Boolean).sort((a, b) => b.localeCompare(a));
+
+                        const selectedMonth = monthTabByBuyer[phone] || monthKeys[0] || '';
+
+                        const monthStart = selectedMonth ? new Date(`${selectedMonth}-01T00:00:00`) : null;
+                        const monthEnd = selectedMonth
+                          ? new Date(new Date(`${selectedMonth}-01T00:00:00`).getFullYear(), new Date(`${selectedMonth}-01T00:00:00`).getMonth() + 1, 0, 23, 59, 59, 999)
+                          : null;
+
+                        const allEntriesAsc = [
+                          ...milkList.map((t) => ({
+                            kind: 'milk',
+                            date: new Date(t.date),
+                            amount: Number(t.totalAmount) || 0,
+                            obj: t,
+                          })),
+                          ...payList.map((p) => ({
+                            kind: 'payment',
+                            date: p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate),
+                            amount: Number(p.amount) || 0,
+                            obj: p,
+                          })),
+                        ].filter((e) => e.date instanceof Date && !isNaN(e.date.getTime()))
+                          .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+                        let opening = 0;
+                        if (monthStart) {
+                          allEntriesAsc.forEach((e) => {
+                            if (e.date < monthStart) {
+                              opening += e.kind === 'milk' ? e.amount : -e.amount;
+                            }
+                          });
+                        }
+
+                        let inAmt = 0;
+                        let outAmt = 0;
+                        const monthEntries = monthStart && monthEnd
+                          ? allEntriesAsc.filter((e) => e.date >= monthStart && e.date <= monthEnd)
+                          : allEntriesAsc;
+                        monthEntries.forEach((e) => {
+                          if (e.kind === 'milk') inAmt += e.amount;
+                          else outAmt += e.amount;
+                        });
+                        const closing = opening + inAmt - outAmt;
+
+                        const monthEntriesDesc = [...monthEntries].sort((a, b) => b.date.getTime() - a.date.getTime());
+
+                        return (
+                          <>
+                            {monthKeys.length > 0 && (
+                              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthTabs} contentContainerStyle={styles.monthTabsContent}>
+                                {monthKeys.map((mk) => {
+                                  const active = mk === selectedMonth;
+                                  return (
+                                    <TouchableOpacity
+                                      key={mk}
+                                      style={[styles.monthTab, active && styles.monthTabActive]}
+                                      onPress={() => setMonthTabByBuyer((m) => ({ ...m, [phone]: mk }))}
+                                      activeOpacity={0.8}
+                                    >
+                                      <Text style={[styles.monthTabText, active && styles.monthTabTextActive]}>{monthLabel(mk)}</Text>
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </ScrollView>
+                            )}
+
+                            <View style={styles.tallyCard}>
+                              <View style={styles.tallyRow}>
+                                <Text style={styles.tallyLabel}>Opening</Text>
+                                <Text style={styles.tallyValue}>{formatCurrency(opening)}</Text>
+                              </View>
+                              <View style={styles.tallyRow}>
+                                <Text style={styles.tallyLabel}>Milk (In)</Text>
+                                <Text style={[styles.tallyValue, styles.tallyIn]}>{formatCurrency(inAmt)}</Text>
+                              </View>
+                              <View style={styles.tallyRow}>
+                                <Text style={styles.tallyLabel}>Payments (Out)</Text>
+                                <Text style={[styles.tallyValue, styles.tallyOut]}>{formatCurrency(outAmt)}</Text>
+                              </View>
+                              <View style={[styles.tallyRow, styles.tallyRowLast]}>
+                                <Text style={styles.tallyLabelStrong}>Closing</Text>
+                                <Text style={[styles.tallyValueStrong, closing > 0 ? styles.tallyDue : styles.tallyClear]}>{formatCurrency(closing)}</Text>
+                              </View>
+                            </View>
+
+                            {canEditUsers && (
+                              <View style={styles.monthActionsRow}>
+                                <TouchableOpacity style={styles.addMilkTxButton} onPress={() => openAddMilkModal(buyer)} activeOpacity={0.7}>
+                                  <Text style={styles.addMilkTxButtonText}>+ Add Milk</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={styles.addPayBtn} onPress={() => openAddPaymentModal(buyer)} activeOpacity={0.7}>
+                                  <Text style={styles.addPayBtnText}>+ Add Payment</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+
+                            {monthEntriesDesc.length > 0 ? (
+                              monthEntriesDesc.map((e, idx) => {
+                                if (e.kind === 'milk') {
+                                  const tx = e.obj;
+                                  return (
+                                    <View key={tx._id || `m-${idx}`} style={styles.transactionItem}>
+                                      <View style={styles.transactionRow}>
+                                        <Text style={styles.transactionDate}>{formatDate(new Date(tx.date))}</Text>
+                                        <Text style={styles.transactionAmount}>{formatCurrency(tx.totalAmount)}</Text>
+                                      </View>
+                                      <View style={styles.transactionRow}>
+                                        <Text style={styles.transactionDetails}>
+                                          {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource || 'Cow'} ·{' '}
+                                          {Number(tx.quantity || 0).toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
+                                        </Text>
+                                      </View>
+                                      {tx.notes && <Text style={styles.transactionNotes}>{tx.notes}</Text>}
+                                      {canEditUsers && (
+                                        <View style={styles.txActionRow}>
+                                          <TouchableOpacity onPress={() => openEditMilkModal(buyer, tx)} style={styles.txActionBtn}>
+                                            <Text style={styles.txActionEdit}>Edit</Text>
+                                          </TouchableOpacity>
+                                          <TouchableOpacity onPress={() => confirmDeleteMilkTx(buyer, tx)} style={styles.txActionBtn}>
+                                            <Text style={styles.txActionDel}>Delete</Text>
+                                          </TouchableOpacity>
+                                        </View>
+                                      )}
+                                    </View>
+                                  );
+                                }
+                                const pay = e.obj;
+                                return (
+                                  <View key={pay._id || `p-${idx}`} style={styles.transactionItem}>
+                                    <View style={styles.transactionRow}>
+                                      <Text style={styles.transactionDate}>{formatDate(pay.paymentDate)}</Text>
+                                      <Text style={styles.transactionAmount}>{formatCurrency(pay.amount)}</Text>
+                                    </View>
+                                    <View style={styles.transactionRow}>
+                                      <Text style={styles.transactionDetails}>
+                                        {[pay.paymentType, pay.paymentDirection].filter(Boolean).join(' · ') || 'Payment'}
+                                      </Text>
+                                    </View>
+                                    {pay.notes ? <Text style={styles.transactionNotes}>{pay.notes}</Text> : null}
+                                    {canEditUsers && (
+                                      <View style={styles.txActionRow}>
+                                        <TouchableOpacity onPress={() => openEditPaymentModal(buyer, pay)} style={styles.txActionBtn}>
+                                          <Text style={styles.txActionEdit}>Edit</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity onPress={() => confirmDeletePayment(pay)} style={styles.txActionBtn}>
+                                          <Text style={styles.txActionDel}>Delete</Text>
+                                        </TouchableOpacity>
+                                      </View>
+                                    )}
+                                  </View>
+                                );
+                              })
+                            ) : (
+                              <Text style={styles.noLogsText}>No entries in this month.</Text>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {canEditUsers && (buyer.billingMode === 'daily' || buyer.billingMode === 'month_end' || buyer.billingMode === 'custom' || (buyer.billingDayOfMonth != null && !buyer.billingMode)) && (
                         <View style={styles.billsSection}>
@@ -1134,92 +1250,6 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                         </View>
                       )}
 
-                      {logTab === 'milk' && (
-                        <>
-                          {canEditUsers && (
-                            <TouchableOpacity
-                              style={styles.addMilkTxButton}
-                              onPress={() => openAddMilkModal(buyer)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.addMilkTxButtonText}>+ Add Milk Transaction</Text>
-                            </TouchableOpacity>
-                          )}
-                          {buyerTransactions.length > 0 ? (
-                            buyerTransactions.map((tx) => (
-                              <View key={tx._id} style={styles.transactionItem}>
-                                <View style={styles.transactionRow}>
-                                  <Text style={styles.transactionDate}>{formatDate(new Date(tx.date))}</Text>
-                                  <Text style={styles.transactionAmount}>{formatCurrency(tx.totalAmount)}</Text>
-                                </View>
-                                <View style={styles.transactionRow}>
-                                  <Text style={styles.transactionDetails}>
-                                    {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource || 'Cow'} ·{' '}
-                                    {tx.quantity.toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
-                                  </Text>
-                                </View>
-                                {tx.notes && (
-                                  <Text style={styles.transactionNotes}>{tx.notes}</Text>
-                                )}
-                                {canEditUsers && (
-                                  <View style={styles.txActionRow}>
-                                    <TouchableOpacity onPress={() => openEditMilkModal(buyer, tx)} style={styles.txActionBtn}>
-                                      <Text style={styles.txActionEdit}>Edit</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => confirmDeleteMilkTx(buyer, tx)} style={styles.txActionBtn}>
-                                      <Text style={styles.txActionDel}>Delete</Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                )}
-                              </View>
-                            ))
-                          ) : (
-                            <Text style={styles.noLogsText}>No milk transactions yet.</Text>
-                          )}
-                        </>
-                      )}
-
-                      {logTab === 'payments' && (
-                        <>
-                          {canEditUsers && (
-                            <TouchableOpacity
-                              style={styles.addMilkTxButton}
-                              onPress={() => openAddPaymentModal(buyer)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.addMilkTxButtonText}>+ Add Payment</Text>
-                            </TouchableOpacity>
-                          )}
-                          {buyerPaymentTransactions.length > 0 ? (
-                            buyerPaymentTransactions.map((pay) => (
-                              <View key={pay._id} style={styles.transactionItem}>
-                                <View style={styles.transactionRow}>
-                                  <Text style={styles.transactionDate}>{formatDate(pay.paymentDate)}</Text>
-                                  <Text style={styles.transactionAmount}>{formatCurrency(pay.amount)}</Text>
-                                </View>
-                                <View style={styles.transactionRow}>
-                                  <Text style={styles.transactionDetails}>
-                                    {[pay.paymentType, pay.paymentDirection].filter(Boolean).join(' · ') || 'Payment'}
-                                  </Text>
-                                </View>
-                                {pay.notes ? <Text style={styles.transactionNotes}>{pay.notes}</Text> : null}
-                                {canEditUsers && (
-                                  <View style={styles.txActionRow}>
-                                    <TouchableOpacity onPress={() => openEditPaymentModal(buyer, pay)} style={styles.txActionBtn}>
-                                      <Text style={styles.txActionEdit}>Edit</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity onPress={() => confirmDeletePayment(pay)} style={styles.txActionBtn}>
-                                      <Text style={styles.txActionDel}>Delete</Text>
-                                    </TouchableOpacity>
-                                  </View>
-                                )}
-                              </View>
-                            ))
-                          ) : (
-                            <Text style={styles.noLogsText}>No payment transactions yet.</Text>
-                          )}
-                        </>
-                      )}
                     </View>
                   )}
                 </View>
@@ -1955,49 +1985,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  dateRangeStrip: {
-    backgroundColor: '#2E7D32',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-  },
-  dateRangeRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 10,
-  },
-  dateField: {
-    flex: 1,
-  },
-  dateLabel: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
-    marginBottom: 4,
-    fontWeight: '600',
-  },
-  dateInput: {
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    marginBottom: 0,
-  },
-  periodTotalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.3)',
-  },
-  periodTotalLabel: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.95)',
-    fontWeight: '600',
-  },
-  periodTotalAmount: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
+  // Date range strip removed (moved to month-wise ledger tabs inside each buyer).
   payFab: {
     position: 'absolute',
     bottom: 24,
@@ -2302,31 +2290,46 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
   },
-  logTabs: {
-    flexDirection: 'row',
+  monthTabs: { marginBottom: 10 },
+  monthTabsContent: { paddingRight: 6 },
+  monthTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#eeeeee',
+    marginRight: 8,
+  },
+  monthTabActive: { backgroundColor: '#1565C0' },
+  monthTabText: { color: '#444', fontWeight: '700', fontSize: 12 },
+  monthTabTextActive: { color: '#fff' },
+  tallyCard: {
+    backgroundColor: '#F5F9FF',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E3F2FD',
     marginBottom: 12,
-    backgroundColor: '#E8E8E8',
-    borderRadius: 8,
-    padding: 4,
   },
-  logTab: {
-    flex: 1,
+  tallyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
+  tallyRowLast: { marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#D7E9FF' },
+  tallyLabel: { fontSize: 12, color: '#546e7a', fontWeight: '700' },
+  tallyValue: { fontSize: 13, color: '#263238', fontWeight: '800' },
+  tallyIn: { color: '#2e7d32' },
+  tallyOut: { color: '#c62828' },
+  tallyLabelStrong: { fontSize: 13, color: '#263238', fontWeight: '900' },
+  tallyValueStrong: { fontSize: 14, fontWeight: '900' },
+  tallyDue: { color: '#c62828' },
+  tallyClear: { color: '#2e7d32' },
+  monthActionsRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  addPayBtn: {
+    backgroundColor: '#1565C0',
     paddingVertical: 10,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    borderRadius: 6,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
   },
-  logTabActive: {
-    backgroundColor: '#2196F3',
-  },
-  logTabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#555',
-  },
-  logTabTextActive: {
-    color: '#FFFFFF',
-  },
+  addPayBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   noLogsText: {
     fontSize: 13,
     color: '#777',
