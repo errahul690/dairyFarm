@@ -387,25 +387,8 @@ const listBuyerBalancesController = async (req, res) => {
     const activeOnly = req.query.active === "true";
     const buyers = await getAllBuyers(activeOnly ? { active: true } : {});
     const buyerIds = buyers.map((b) => b._id);
-    let balances = await listBuyerBalances({ buyerId: { $in: buyerIds } });
-
-    // If some buyers don't yet have stored balance docs, rebuild them once (bounded).
-    const have = new Set((Array.isArray(balances) ? balances : []).map((b) => String(b.buyerId)));
-    const missing = buyerIds.filter((id) => !have.has(String(id)));
-    if (missing.length > 0) {
-      const cap = Math.min(200, missing.length);
-      for (let i = 0; i < cap; i++) {
-        try {
-          // rebuild also fills monthly summaries; keeps UI accurate and avoids blanks
-          await rebuildBuyerBalanceAndMonthly(missing[i]);
-        } catch (e) {
-          console.warn("[buyers] balance rebuild skipped for buyer", String(missing[i]), e?.message || e);
-        }
-      }
-      balances = await listBuyerBalances({ buyerId: { $in: buyerIds } });
-    }
-
-    return res.json(Array.isArray(balances) ? balances : []);
+    const balances = await listBuyerBalances({ buyerId: { $in: buyerIds } });
+    return res.json(balances);
   } catch (error) {
     console.error("[buyers] listBuyerBalances:", error);
     return res.status(500).json({ error: "Failed to fetch buyer balances", message: error.message });

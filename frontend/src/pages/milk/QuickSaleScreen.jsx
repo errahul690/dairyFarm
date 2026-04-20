@@ -278,12 +278,6 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
 
       const list = Array.isArray(balances) ? balances : [];
       const map = {};
-      // Default to 0 for all buyers so UI always shows a value.
-      buyersArr.forEach((b) => {
-        const m = normalizeMobile(b?.mobile || '');
-        if (!m) return;
-        map[m] = 0;
-      });
       list.forEach((b) => {
         const m = normalizeMobile(b.buyerMobile || '');
         if (!m) return;
@@ -727,15 +721,17 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                     <Text style={styles.buyerMobileText} numberOfLines={1}>
                       {String(b.mobile || '').trim()}
                     </Text>
-                    <Text
-                      style={[
-                        styles.buyerBalanceText,
-                        balancesByMobile[normalizeMobile(b.mobile || '')] > 0 ? styles.buyerBalanceDue : styles.buyerBalanceClear,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      Pending: ₹{Number(balancesByMobile[normalizeMobile(b.mobile || '')] || 0).toFixed(0)}
-                    </Text>
+                    {balancesByMobile[normalizeMobile(b.mobile || '')] != null && (
+                      <Text
+                        style={[
+                          styles.buyerBalanceText,
+                          balancesByMobile[normalizeMobile(b.mobile || '')] > 0 ? styles.buyerBalanceDue : styles.buyerBalanceClear,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        Pending: ₹{Number(balancesByMobile[normalizeMobile(b.mobile || '')] || 0).toFixed(0)}
+                      </Text>
+                    )}
                   </>
                 ) : null}
               </View>
