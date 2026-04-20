@@ -11,12 +11,14 @@ const {
   listBuyerBalancesController,
   getBuyerMonthlySummariesController,
   rebuildBuyerBalanceController,
+  listBuyerMonthlySummariesByMonthKeyController,
 } = require("../controllers/buyers.controller");
 
 const router = Router();
 
 router.get("/", requireAuth, listBuyers);
 router.get("/balances", requireAuth, requireAdminOrSuperAdmin, listBuyerBalancesController);
+router.get("/monthly-summary", requireAuth, requireAdminOrSuperAdmin, listBuyerMonthlySummariesByMonthKeyController);
 router.get("/me", requireAuth, getMyBuyerProfile);
 router.get("/me/balance", requireAuth, getMyBuyerBalance);
 router.get("/me/monthly", requireAuth, getMyBuyerMonthlySummaries);

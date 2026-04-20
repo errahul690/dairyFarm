@@ -11,15 +11,6 @@ function monthLabel(monthKey) {
   if (!y || !m) return String(monthKey || '');
   return `${MONTHS[m - 1]} ${y}`;
 }
-function nextMonthKey(monthKey) {
-  const [y, m] = String(monthKey || '').split('-').map(Number);
-  if (!y || !m) return null;
-  const d = new Date(Date.UTC(y, m - 1, 1));
-  d.setUTCMonth(d.getUTCMonth() + 1);
-  const yy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  return `${yy}-${mm}`;
-}
 function endOfMonthYmd(monthKey) {
   const [y, m] = String(monthKey || '').split('-').map(Number);
   if (!y || !m) return null;
@@ -59,20 +50,71 @@ export default function BuyerMonthlyBillsScreen({ onNavigate, onLogout }) {
 
   const selected = useMemo(() => monthly.find((m) => m.monthKey === selectedMonth) || null, [monthly, selectedMonth]);
 
-  const paidStatus = useMemo(() => {
-    if (!selected) return { due: 0, paidInNextMonth: 0, remaining: 0, isPaid: false };
-    const due = Number(selected.closingBalance) || 0;
-    const nextKey = nextMonthKey(selected.monthKey);
-    const paidInNextMonth = (payments || []).reduce((sum, p) => {
+  const paymentByMonth = useMemo(() => {
+    const map = {};
+    (payments || []).forEach((p) => {
       const dt = p?.paymentDate instanceof Date ? p.paymentDate : new Date(p?.paymentDate);
-      if (isNaN(dt.getTime())) return sum;
-      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
-      if (key !== nextKey) return sum;
-      return sum + (Number(p.amount) || 0);
-    }, 0);
-    const remaining = Math.max(0, due - paidInNextMonth);
-    return { due, paidInNextMonth, remaining, isPaid: due > 0 ? paidInNextMonth >= due : true };
-  }, [selected, payments]);
+      if (isNaN(dt.getTime())) return;
+      const mk = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+      map[mk] = (map[mk] || 0) + (Number(p.amount) || 0);
+    });
+    return map;
+  }, [payments]);
+
+  const fifoAlloc = useMemo(() => {
+    // FIFO allocation of payments to oldest dues, based on month summaries:
+    // charges per month = milkIn; payments per month = paymentsOut (from summaries) OR actual payments.
+    // We prefer month summaries' paymentsOut for consistency with bills. If missing, fallback to actual payments by month.
+    const chrono = (Array.isArray(monthly) ? monthly : []).slice().sort((a, b) => String(a.monthKey).localeCompare(String(b.monthKey)));
+    const buckets = chrono.map((m) => ({
+      monthKey: m.monthKey,
+      charge: Math.max(0, Number(m.milkIn) || 0),
+      remaining: Math.max(0, Number(m.milkIn) || 0),
+    }));
+    const paymentsChrono = chrono.map((m) => ({
+      monthKey: m.monthKey,
+      amount: Number(m.paymentsOut) || paymentByMonth[m.monthKey] || 0,
+    }));
+
+    let i = 0;
+    paymentsChrono.forEach((pm) => {
+      let amt = Math.max(0, pm.amount);
+      while (amt > 0 && i < buckets.length) {
+        if (buckets[i].remaining <= 0) {
+          i += 1;
+          continue;
+        }
+        const pay = Math.min(amt, buckets[i].remaining);
+        buckets[i].remaining -= pay;
+        amt -= pay;
+        if (buckets[i].remaining <= 0) i += 1;
+      }
+    });
+
+    const remainingByMonth = {};
+    buckets.forEach((b) => {
+      remainingByMonth[b.monthKey] = Math.round((b.remaining || 0) * 100) / 100;
+    });
+
+    return { remainingByMonth };
+  }, [monthly, paymentByMonth]);
+
+  const paidStatus = useMemo(() => {
+    if (!selected) return { due: 0, remaining: 0, isPaid: false, paidTotal: 0 };
+    const due = Number(selected.closingBalance) || 0;
+    // Month is considered cleared if all dues up to that month are cleared (FIFO).
+    const chronoKeys = (Array.isArray(monthly) ? monthly : [])
+      .map((m) => m.monthKey)
+      .slice()
+      .sort((a, b) => String(a).localeCompare(String(b)));
+    const idx = chronoKeys.indexOf(selected.monthKey);
+    const keysUpTo = idx >= 0 ? chronoKeys.slice(0, idx + 1) : [];
+    const remainingUpTo = keysUpTo.reduce((sum, k) => sum + (Number(fifoAlloc.remainingByMonth[k]) || 0), 0);
+    const remaining = Math.round(Math.max(0, remainingUpTo) * 100) / 100;
+    const isPaid = remaining <= 0.0001;
+    const paidTotal = Math.round((Math.max(0, due - remaining) * 100)) / 100;
+    return { due, remaining, isPaid, paidTotal };
+  }, [selected, monthly, fifoAlloc]);
 
   return (
     <View style={styles.container}>
@@ -135,7 +177,7 @@ export default function BuyerMonthlyBillsScreen({ onNavigate, onLogout }) {
               <View style={styles.statusCard}>
                 <Text style={styles.statusTitle}>Status</Text>
                 <Text style={styles.statusLine}>
-                  Due: {formatCurrency(paidStatus.due)} · Paid next month: {formatCurrency(paidStatus.paidInNextMonth)}
+                  Due at month end: {formatCurrency(paidStatus.due)} · Paid: {formatCurrency(paidStatus.paidTotal)}
                 </Text>
                 <Text style={[styles.statusMain, paidStatus.remaining > 0 ? styles.dueText : styles.clearText]}>
                   {paidStatus.remaining > 0 ? `Remaining: ${formatCurrency(paidStatus.remaining)}` : 'Paid'}

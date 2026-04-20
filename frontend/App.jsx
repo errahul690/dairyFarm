@@ -8,6 +8,7 @@ import CharaScreen from './src/pages/chara/CharaScreen';
 import ProfitLossScreen from './src/pages/reports/ProfitLossScreen';
 import MilkSalesReportScreen from './src/pages/reports/MilkSalesReportScreen';
 import BuyerScreen from './src/pages/buyers/BuyerScreen';
+import BuyerMonthlySummaryScreen from './src/pages/buyers/BuyerMonthlySummaryScreen';
 import SellerScreen from './src/pages/sellers/SellerScreen';
 import QuickSaleScreen from './src/pages/milk/QuickSaleScreen';
 import DeliveryScheduleScreen from './src/pages/milk/DeliveryScheduleScreen';
@@ -90,7 +91,7 @@ function App() {
 
   const navigateToScreen = (screen, params) => {
     // Protected screens - only accessible after login
-    const protectedScreens = ['Dashboard', 'Animals', 'Milk', 'Quick Sale', 'Delivery Schedule', 'Milk Requests', 'Notifications', 'Chara', 'Profit/Loss', 'Milk Sales Report', 'Buyer', 'Seller', 'Payments', 'Pending Payments', 'Payments to collect', 'Admin List', 'Add Admin', 'Settings', 'Buyer Dashboard', 'Milk Request', 'My Schedule', 'Ledger', 'Monthly Bills', 'Transaction History', 'Payment History', 'Pending Payment'];
+    const protectedScreens = ['Dashboard', 'Animals', 'Milk', 'Quick Sale', 'Delivery Schedule', 'Milk Requests', 'Notifications', 'Chara', 'Profit/Loss', 'Milk Sales Report', 'Buyer', 'Monthly Summary', 'Seller', 'Payments', 'Pending Payments', 'Payments to collect', 'Admin List', 'Add Admin', 'Settings', 'Buyer Dashboard', 'Milk Request', 'My Schedule', 'Ledger', 'Monthly Bills', 'Transaction History', 'Payment History', 'Pending Payment'];
     
     // If trying to access protected screen without login, redirect to login
     if (protectedScreens.includes(screen) && !isAuthenticated) {
@@ -189,6 +190,8 @@ function App() {
             openEditOnFocus={!!navParams?.Buyer?.openEdit}
           />
         );
+      case 'Monthly Summary':
+        return <BuyerMonthlySummaryScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Seller':
         return <SellerScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Admin List':
@@ -196,7 +199,17 @@ function App() {
       case 'Add Admin':
         return <AddAdminScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Payments':
-        return <PaymentScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
+        return (
+          <PaymentScreen
+            onNavigate={navigateToScreen}
+            onLogout={handleLogout}
+            openAddPayment={!!navParams?.Payments?.openAddPayment}
+            initialCustomerMobile={navParams?.Payments?.customerMobile}
+            initialCustomerName={navParams?.Payments?.customerName}
+            initialPaymentDate={navParams?.Payments?.paymentDate}
+            onConsumedNavParam={() => setNavParams((p) => ({ ...p, Payments: undefined }))}
+          />
+        );
       case 'Pending Payments':
       case 'Payments to collect':
         return <PendingPaymentsScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;

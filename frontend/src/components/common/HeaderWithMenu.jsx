@@ -26,6 +26,7 @@ const baseMenuItems = [
   { id: 5, title: 'Profit/Loss', icon: '💰' },
   { id: 6, title: 'Milk Sales Report', icon: '📈' },
   { id: 7, title: 'Buyer', icon: '👥' },
+  { id: 15, title: 'Monthly Summary', icon: '🗓️' },
   { id: 8, title: 'Seller', icon: '🏪' },
   { id: 11, title: 'Payments', icon: '💵' },
   { id: 12, title: 'Payments to collect', icon: '📋' },

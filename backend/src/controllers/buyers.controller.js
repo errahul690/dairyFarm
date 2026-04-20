@@ -2,7 +2,7 @@ const { getAllBuyers, getBuyerById, updateBuyerById, findBuyerByUserId, addBuyer
 const { findSellerByUserId, getSellerById } = require("../models/sellers");
 const { User } = require("../models/users");
 const { getBuyerBalanceByBuyerId, listBuyerBalances } = require("../models/buyerBalances");
-const { listMonthlySummariesForBuyer } = require("../models/buyerMonthlySummaries");
+const { listMonthlySummariesForBuyer, listMonthlySummariesByMonthKey } = require("../models/buyerMonthlySummaries");
 const { rebuildBuyerBalanceAndMonthly } = require("../services/buyerBalance.service");
 
 /**
@@ -133,6 +133,42 @@ const getMyBuyerMonthlySummaries = async (req, res) => {
     return res.json(Array.isArray(list) ? list : []);
   } catch (error) {
     console.error("[buyers] getMyBuyerMonthlySummaries:", error);
+    return res.status(500).json({ error: "Failed to fetch monthly summaries", message: error.message });
+  }
+};
+
+/**
+ * Admin: list stored monthly summaries for ALL buyers for a given monthKey.
+ * GET /buyers/monthly-summary?monthKey=YYYY-MM&active=true
+ */
+const listBuyerMonthlySummariesByMonthKeyController = async (req, res) => {
+  try {
+    if (!(req.user?.role === 0 || req.user?.role === 1)) {
+      return res.status(403).json({ error: "Only admins can access this" });
+    }
+    const userId = req.user?.userId || req.user?._id;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const monthKey = String(req.query.monthKey || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ error: "monthKey is required (YYYY-MM)" });
+    }
+
+    const activeOnly = req.query.active === "true";
+    const limit = Math.min(10000, Math.max(1, parseInt(String(req.query.limit || "5000"), 10) || 5000));
+
+    let list = await listMonthlySummariesByMonthKey(userId, monthKey, limit);
+    list = Array.isArray(list) ? list : [];
+
+    if (activeOnly) {
+      const buyers = await getAllBuyers({ active: true });
+      const allowed = new Set((buyers || []).map((b) => String(b._id)));
+      list = list.filter((s) => allowed.has(String(s.buyerId)));
+    }
+
+    return res.json(list);
+  } catch (error) {
+    console.error("[buyers] listBuyerMonthlySummariesByMonthKeyController:", error);
     return res.status(500).json({ error: "Failed to fetch monthly summaries", message: error.message });
   }
 };
@@ -351,8 +387,25 @@ const listBuyerBalancesController = async (req, res) => {
     const activeOnly = req.query.active === "true";
     const buyers = await getAllBuyers(activeOnly ? { active: true } : {});
     const buyerIds = buyers.map((b) => b._id);
-    const balances = await listBuyerBalances({ buyerId: { $in: buyerIds } });
-    return res.json(balances);
+    let balances = await listBuyerBalances({ buyerId: { $in: buyerIds } });
+
+    // If some buyers don't yet have stored balance docs, rebuild them once (bounded).
+    const have = new Set((Array.isArray(balances) ? balances : []).map((b) => String(b.buyerId)));
+    const missing = buyerIds.filter((id) => !have.has(String(id)));
+    if (missing.length > 0) {
+      const cap = Math.min(200, missing.length);
+      for (let i = 0; i < cap; i++) {
+        try {
+          // rebuild also fills monthly summaries; keeps UI accurate and avoids blanks
+          await rebuildBuyerBalanceAndMonthly(missing[i]);
+        } catch (e) {
+          console.warn("[buyers] balance rebuild skipped for buyer", String(missing[i]), e?.message || e);
+        }
+      }
+      balances = await listBuyerBalances({ buyerId: { $in: buyerIds } });
+    }
+
+    return res.json(Array.isArray(balances) ? balances : []);
   } catch (error) {
     console.error("[buyers] listBuyerBalances:", error);
     return res.status(500).json({ error: "Failed to fetch buyer balances", message: error.message });
@@ -405,5 +458,6 @@ module.exports = {
   listBuyerBalancesController,
   getBuyerMonthlySummariesController,
   rebuildBuyerBalanceController,
+  listBuyerMonthlySummariesByMonthKeyController,
 };
 

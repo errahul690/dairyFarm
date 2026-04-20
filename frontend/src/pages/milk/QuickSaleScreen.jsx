@@ -28,6 +28,15 @@ const HEADER_ROW_MIN_H = 52;
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const CAL_WEEK_HEADERS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+function normalizeMobile(m) {
+  const raw = String(m || '').trim();
+  if (!raw) return '';
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return raw;
+  // keep last 10 digits for India numbers (handles +91/0 prefixes)
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
 function addDaysYmd(ymd, deltaDays) {
   const [y, m, d] = ymd.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d));
@@ -269,8 +278,14 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
 
       const list = Array.isArray(balances) ? balances : [];
       const map = {};
+      // Default to 0 for all buyers so UI always shows a value.
+      buyersArr.forEach((b) => {
+        const m = normalizeMobile(b?.mobile || '');
+        if (!m) return;
+        map[m] = 0;
+      });
       list.forEach((b) => {
-        const m = String(b.buyerMobile || '').trim();
+        const m = normalizeMobile(b.buyerMobile || '');
         if (!m) return;
         map[m] = Number(b.pendingAmount) || 0;
       });
@@ -683,30 +698,44 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                       {b.name}
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => onNavigate('Buyer', { focusMobile: String(b.mobile || '').trim(), openEdit: true })}
-                    disabled={!String(b.mobile || '').trim()}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text style={styles.buyerEditLink}>Edit</Text>
-                  </TouchableOpacity>
+                  <View style={styles.nameCellActions}>
+                    <TouchableOpacity
+                      onPress={() => onNavigate('Buyer', { focusMobile: String(b.mobile || '').trim(), openEdit: true })}
+                      disabled={!String(b.mobile || '').trim()}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.buyerEditLink}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() =>
+                        onNavigate('Payments', {
+                          openAddPayment: true,
+                          customerMobile: String(b.mobile || '').trim(),
+                          customerName: String(b.name || '').trim(),
+                          paymentDate: selectedDateYmd,
+                        })
+                      }
+                      disabled={!String(b.mobile || '').trim()}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.buyerPayLink}>Pay</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
                 {String(b.mobile || '').trim() ? (
                   <>
                     <Text style={styles.buyerMobileText} numberOfLines={1}>
                       {String(b.mobile || '').trim()}
                     </Text>
-                    {balancesByMobile[String(b.mobile || '').trim()] != null && (
-                      <Text
-                        style={[
-                          styles.buyerBalanceText,
-                          balancesByMobile[String(b.mobile || '').trim()] > 0 ? styles.buyerBalanceDue : styles.buyerBalanceClear,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        Pending: ₹{Number(balancesByMobile[String(b.mobile || '').trim()] || 0).toFixed(0)}
-                      </Text>
-                    )}
+                    <Text
+                      style={[
+                        styles.buyerBalanceText,
+                        balancesByMobile[normalizeMobile(b.mobile || '')] > 0 ? styles.buyerBalanceDue : styles.buyerBalanceClear,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Pending: ₹{Number(balancesByMobile[normalizeMobile(b.mobile || '')] || 0).toFixed(0)}
+                    </Text>
                   </>
                 ) : null}
               </View>
@@ -1097,6 +1126,8 @@ const styles = StyleSheet.create({
   nameTextLink: { fontSize: 12, fontWeight: '600', color: '#1565C0', textDecorationLine: 'underline' },
   nameCellTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   buyerEditLink: { fontSize: 12, color: '#2e7d32', fontWeight: '800' },
+  nameCellActions: { alignItems: 'flex-end', gap: 6 },
+  buyerPayLink: { fontSize: 12, color: '#1565C0', fontWeight: '900' },
   buyerMobileText: { marginTop: 2, fontSize: 11, color: '#666' },
   buyerBalanceText: { marginTop: 2, fontSize: 11, fontWeight: '700' },
   buyerBalanceDue: { color: '#c62828' },

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,7 +23,15 @@ import { getAuthToken } from '../../services/api/apiClient';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import RNShare from 'react-native-share';
 
-export default function PaymentScreen({ onNavigate, onLogout }) {
+export default function PaymentScreen({
+  onNavigate,
+  onLogout,
+  openAddPayment = false,
+  initialCustomerMobile,
+  initialCustomerName,
+  initialPaymentDate,
+  onConsumedNavParam,
+}) {
   const [payments, setPayments] = useState([]);
   const [paymentsToSellers, setPaymentsToSellers] = useState([]);
   const [milkTransactions, setMilkTransactions] = useState([]);
@@ -52,6 +60,8 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
     referenceNumber: '',
   });
 
+  const appliedPrefillRef = useRef(false);
+
   // Date filter: 'all' | 'date' — filter payments list by date range
   const [paymentDateFilter, setPaymentDateFilter] = useState('all');
   const [filterDateFrom, setFilterDateFrom] = useState(() => {
@@ -65,6 +75,33 @@ export default function PaymentScreen({ onNavigate, onLogout }) {
     loadData();
     loadCurrentUser();
   }, []);
+
+  useEffect(() => {
+    const mobile = initialCustomerMobile && String(initialCustomerMobile).trim();
+    if (!openAddPayment || !mobile) return;
+    if (appliedPrefillRef.current) return;
+    if (!Array.isArray(customers) || customers.length === 0) return;
+
+    appliedPrefillRef.current = true;
+    setActivePaymentTab('buyer');
+    setShowAddForm(true);
+
+    const match =
+      customers.find((c) => String((c.mobile || '')).trim() === mobile) ||
+      customers.find((c) => String((c.mobile || '')).trim().endsWith(mobile)) ||
+      null;
+
+    if (match) setSelectedCustomer(match);
+    setFormData((prev) => ({
+      ...prev,
+      customerId: match?.userId || prev.customerId,
+      customerName: match?.name || (initialCustomerName ? String(initialCustomerName).trim() : prev.customerName),
+      customerMobile: match?.mobile || mobile,
+      paymentDate: (initialPaymentDate && String(initialPaymentDate).trim()) || prev.paymentDate,
+    }));
+
+    if (typeof onConsumedNavParam === 'function') onConsumedNavParam();
+  }, [openAddPayment, initialCustomerMobile, initialCustomerName, initialPaymentDate, customers]);
 
   const loadCurrentUser = async () => {
     const user = await authService.getCurrentUser();

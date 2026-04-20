@@ -11,6 +11,7 @@ import {
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import { milkService } from '../../services/milk/milkService';
 import { paymentService } from '../../services/payments/paymentService';
+import { buyerService } from '../../services/buyers/buyerService';
 import { formatCurrency } from '../../utils/currencyUtils';
 import { MILK_SOURCE_TYPES } from '../../constants';
 
@@ -27,10 +28,31 @@ function getMonthStart(d) {
   return x.toISOString().split('T')[0];
 }
 
+function monthKeyFromDate(d) {
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return '';
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function endOfMonthYmd(monthKey) {
+  const [y, m] = String(monthKey || '').split('-').map(Number);
+  if (!y || !m) return null;
+  const lastDay = new Date(Date.UTC(y, m, 0));
+  return lastDay.toISOString().slice(0, 10);
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function monthLabel(monthKey) {
+  const [y, m] = String(monthKey || '').split('-').map(Number);
+  if (!y || !m) return String(monthKey || '');
+  return `${MONTHS[m - 1]} ${y}`;
+}
+
 export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
   const [transactions, setTransactions] = useState([]);
   const [payments, setPayments] = useState([]);
   const [settlements, setSettlements] = useState([]);
+  const [monthly, setMonthly] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -40,15 +62,17 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [txData, paymentData, settlementData] = await Promise.all([
+      const [txData, paymentData, settlementData, monthlyList] = await Promise.all([
         milkService.getTransactions(),
         paymentService.getPayments().catch(() => []),
         paymentService.getSettlements().catch(() => []),
+        buyerService.getMyMonthlySummaries(24).catch(() => []),
       ]);
       const sales = (Array.isArray(txData) ? txData : []).filter((t) => t.type === 'sale');
       setTransactions(sales);
       setPayments(Array.isArray(paymentData) ? paymentData : []);
       setSettlements(Array.isArray(settlementData) ? settlementData : []);
+      setMonthly(Array.isArray(monthlyList) ? monthlyList : []);
     } catch (error) {
       console.error('Buyer dashboard load error:', error);
       Alert.alert('Error', 'Failed to load data.');
@@ -111,6 +135,65 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
       .slice(0, 5);
   }, [transactionsAfterCutoff, monthStartStr]);
 
+  const billsPreview = useMemo(() => {
+    const list = (monthly || []).slice();
+    // Ensure chronological for FIFO computation
+    const chrono = list.slice().sort((a, b) => String(a.monthKey).localeCompare(String(b.monthKey)));
+    const remainingByMonth = {};
+    // charges = milkIn; payments = paymentsOut from summary
+    const buckets = chrono.map((m) => ({
+      monthKey: m.monthKey,
+      remaining: Math.max(0, Number(m.milkIn) || 0),
+    }));
+    const paymentsChrono = chrono.map((m) => Math.max(0, Number(m.paymentsOut) || 0));
+    let i = 0;
+    paymentsChrono.forEach((amt0) => {
+      let amt = amt0;
+      while (amt > 0 && i < buckets.length) {
+        if (buckets[i].remaining <= 0) {
+          i += 1;
+          continue;
+        }
+        const pay = Math.min(amt, buckets[i].remaining);
+        buckets[i].remaining -= pay;
+        amt -= pay;
+        if (buckets[i].remaining <= 0) i += 1;
+      }
+    });
+    buckets.forEach((b) => {
+      remainingByMonth[b.monthKey] = Math.round((b.remaining || 0) * 100) / 100;
+    });
+
+    const nowKey = monthKeyFromDate(new Date());
+    const [y, m] = nowKey.split('-').map(Number);
+    const prevKey = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+
+    const byKey = {};
+    chrono.forEach((x) => {
+      byKey[x.monthKey] = x;
+    });
+
+    const current = byKey[nowKey] || null;
+    const last = byKey[prevKey] || null;
+
+    const statusFor = (monthKey) => {
+      if (!monthKey) return { remainingUpTo: 0, isPaid: true };
+      const keys = chrono.map((x) => x.monthKey);
+      const idx = keys.indexOf(monthKey);
+      const upTo = idx >= 0 ? keys.slice(0, idx + 1) : [];
+      const remainingUpTo = upTo.reduce((s, k) => s + (Number(remainingByMonth[k]) || 0), 0);
+      const rem = Math.round(Math.max(0, remainingUpTo) * 100) / 100;
+      return { remainingUpTo: rem, isPaid: rem <= 0.0001 };
+    };
+
+    return {
+      current: current ? { ...current, status: statusFor(current.monthKey) } : null,
+      last: last ? { ...last, status: statusFor(last.monthKey) } : null,
+      nowKey,
+      prevKey,
+    };
+  }, [monthly]);
+
   return (
     <View style={styles.container}>
       <HeaderWithMenu
@@ -155,6 +238,52 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
                 <Text style={styles.cardValue}>{formatCurrency(totalPaid)}</Text>
               </View>
             </View>
+
+            {(billsPreview.current || billsPreview.last) && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Bills</Text>
+
+                {billsPreview.current && (
+                  <View style={styles.billMiniCard}>
+                    <Text style={styles.billMiniTitle}>Current month · {monthLabel(billsPreview.current.monthKey)}</Text>
+                    <Text style={styles.billMiniLine}>
+                      Closing (Due): {formatCurrency(billsPreview.current.closingBalance || 0)}
+                    </Text>
+                    <Text style={[styles.billMiniStatus, billsPreview.current.status.isPaid ? styles.billPaid : styles.billDue]}>
+                      {billsPreview.current.status.isPaid ? 'Paid' : `Remaining: ${formatCurrency(billsPreview.current.status.remainingUpTo)}`}
+                    </Text>
+                    {!billsPreview.current.status.isPaid && (
+                      <TouchableOpacity
+                        style={styles.billPayBtn}
+                        onPress={() => onNavigate('Pending Payment', { initialPayUptoDate: endOfMonthYmd(billsPreview.current.monthKey) })}
+                      >
+                        <Text style={styles.billPayBtnText}>Pay →</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+
+                {billsPreview.last && (
+                  <View style={styles.billMiniCard}>
+                    <Text style={styles.billMiniTitle}>Last month · {monthLabel(billsPreview.last.monthKey)}</Text>
+                    <Text style={styles.billMiniLine}>
+                      Closing (Due): {formatCurrency(billsPreview.last.closingBalance || 0)}
+                    </Text>
+                    <Text style={[styles.billMiniStatus, billsPreview.last.status.isPaid ? styles.billPaid : styles.billDue]}>
+                      {billsPreview.last.status.isPaid ? 'Paid' : `Remaining: ${formatCurrency(billsPreview.last.status.remainingUpTo)}`}
+                    </Text>
+                    {!billsPreview.last.status.isPaid && (
+                      <TouchableOpacity
+                        style={styles.billPayBtn}
+                        onPress={() => onNavigate('Pending Payment', { initialPayUptoDate: endOfMonthYmd(billsPreview.last.monthKey) })}
+                      >
+                        <Text style={styles.billPayBtnText}>Pay →</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+              </View>
+            )}
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Recent this month</Text>
@@ -231,6 +360,21 @@ const styles = StyleSheet.create({
   txAmount: { fontSize: 14, fontWeight: '600', color: '#333' },
   moreLink: { marginTop: 12 },
   moreLinkText: { color: '#4CAF50', fontWeight: '600', fontSize: 14 },
+  billMiniCard: {
+    backgroundColor: '#F5F9FF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E3F2FD',
+    marginBottom: 12,
+  },
+  billMiniTitle: { fontSize: 14, fontWeight: '900', color: '#1565C0' },
+  billMiniLine: { marginTop: 8, fontSize: 13, color: '#263238', fontWeight: '700' },
+  billMiniStatus: { marginTop: 8, fontSize: 13, fontWeight: '900' },
+  billPaid: { color: '#2e7d32' },
+  billDue: { color: '#c62828' },
+  billPayBtn: { marginTop: 10, backgroundColor: '#4CAF50', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  billPayBtnText: { color: '#fff', fontWeight: '900' },
   fab: {
     position: 'absolute',
     bottom: 24,

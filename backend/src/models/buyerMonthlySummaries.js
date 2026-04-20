@@ -62,9 +62,16 @@ async function listMonthlySummariesForBuyer(buyerId, limit = 24) {
     .lean();
 }
 
+async function listMonthlySummariesByMonthKey(userId, monthKey, limit = 5000) {
+  return BuyerMonthlySummary.find({ userId, monthKey: String(monthKey || "").trim() })
+    .limit(Math.min(10000, Math.max(1, limit)))
+    .lean();
+}
+
 module.exports = {
   BuyerMonthlySummary,
   upsertBuyerMonthlySummary,
   listMonthlySummariesForBuyer,
+  listMonthlySummariesByMonthKey,
 };
 

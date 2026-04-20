@@ -362,7 +362,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
         // Open edit modal once buyer list is ready (layout + buyers computed).
         setTimeout(() => {
           try {
-            const buyerObj = buyers.find((b) => String(b.phone || '').trim() === m);
+            const buyerObj = buyersData.find((b) => String((b.phone || b.mobile) || '').trim() === m);
             if (buyerObj) openEditForm(buyerObj);
           } catch (_) {}
         }, 80);

@@ -90,5 +90,16 @@ export const buyerService = {
     const response = await apiClient.get(`/buyers/${id}/monthly?limit=${encodeURIComponent(String(limit))}`);
     return Array.isArray(response) ? response : [];
   },
+
+  /** Admin: stored month summaries for ALL buyers for a given monthKey (YYYY-MM). */
+  getBuyerMonthlySummaryByMonthKey: async (monthKey, activeOnly = true, limit = 5000) => {
+    const mk = String(monthKey || '').trim();
+    const params = new URLSearchParams();
+    params.append('monthKey', mk);
+    if (activeOnly) params.append('active', 'true');
+    if (limit != null) params.append('limit', String(limit));
+    const response = await apiClient.get(`/buyers/monthly-summary?${params.toString()}`);
+    return Array.isArray(response) ? response : [];
+  },
 };
 
