@@ -91,6 +91,53 @@ const getMyBuyerProfile = async (req, res) => {
 };
 
 /**
+ * Buyer app: get my stored balance (pending = lifetime milk - lifetime payments; settlement ignored).
+ * GET /buyers/me/balance
+ */
+const getMyBuyerBalance = async (req, res) => {
+  try {
+    if (req.user?.role !== 2) return res.status(403).json({ error: "Only buyers can access this" });
+    const userId = req.user?.userId || req.user?._id;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const buyer = await findBuyerByUserId(userId);
+    if (!buyer) return res.status(404).json({ error: "Buyer profile not found" });
+    const balance = await getBuyerBalanceByBuyerId(buyer._id);
+    if (!balance) {
+      const doc = await rebuildBuyerBalanceAndMonthly(buyer._id);
+      return res.json(doc || { buyerId: buyer._id.toString(), userId: buyer.userId.toString(), pendingAmount: 0, totalMilkAmount: 0, totalPaidAmount: 0 });
+    }
+    return res.json(balance);
+  } catch (error) {
+    console.error("[buyers] getMyBuyerBalance:", error);
+    return res.status(500).json({ error: "Failed to fetch balance", message: error.message });
+  }
+};
+
+/**
+ * Buyer app: list my month summaries (opening/in/out/closing).
+ * GET /buyers/me/monthly?limit=24
+ */
+const getMyBuyerMonthlySummaries = async (req, res) => {
+  try {
+    if (req.user?.role !== 2) return res.status(403).json({ error: "Only buyers can access this" });
+    const userId = req.user?.userId || req.user?._id;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const buyer = await findBuyerByUserId(userId);
+    if (!buyer) return res.status(404).json({ error: "Buyer profile not found" });
+    const limit = Math.min(120, Math.max(1, parseInt(String(req.query.limit || "24"), 10) || 24));
+    let list = await listMonthlySummariesForBuyer(buyer._id, limit);
+    if (!Array.isArray(list) || list.length === 0) {
+      await rebuildBuyerBalanceAndMonthly(buyer._id);
+      list = await listMonthlySummariesForBuyer(buyer._id, limit);
+    }
+    return res.json(Array.isArray(list) ? list : []);
+  } catch (error) {
+    console.error("[buyers] getMyBuyerMonthlySummaries:", error);
+    return res.status(500).json({ error: "Failed to fetch monthly summaries", message: error.message });
+  }
+};
+
+/**
  * Buyer updates own profile (quantity / deliveryItems only). Role 2 only.
  * PATCH /buyers/me
  */
@@ -350,6 +397,8 @@ const rebuildBuyerBalanceController = async (req, res) => {
 module.exports = {
   listBuyers,
   getMyBuyerProfile,
+  getMyBuyerBalance,
+  getMyBuyerMonthlySummaries,
   updateMyBuyerProfile,
   updateBuyer,
   createBuyerFromSeller,

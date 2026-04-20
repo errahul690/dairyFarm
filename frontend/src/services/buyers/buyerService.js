@@ -12,6 +12,17 @@ export const buyerService = {
     return response;
   },
 
+  /** Buyer app: stored balance (pending = total milk - payments; settlement ignored). */
+  getMyBalance: async () => {
+    return await apiClient.get('/buyers/me/balance');
+  },
+
+  /** Buyer app: monthly summaries (opening/in/out/closing). */
+  getMyMonthlySummaries: async (limit = 24) => {
+    const response = await apiClient.get(`/buyers/me/monthly?limit=${encodeURIComponent(String(limit))}`);
+    return Array.isArray(response) ? response : [];
+  },
+
   /** Buyer updates own quantity/deliveryItems (role 2). PATCH /buyers/me */
   updateMyProfile: async (payload) => {
     const response = await apiClient.patch('/buyers/me', payload);

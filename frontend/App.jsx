@@ -25,6 +25,7 @@ import BuyerPaymentHistoryScreen from './src/pages/buyerApp/BuyerPaymentHistoryS
 import BuyerPendingPaymentScreen from './src/pages/buyerApp/BuyerPendingPaymentScreen';
 import BuyerScheduleScreen from './src/pages/buyerApp/BuyerScheduleScreen';
 import BuyerLedgerScreen from './src/pages/buyerApp/BuyerLedgerScreen';
+import BuyerMonthlyBillsScreen from './src/pages/buyerApp/BuyerMonthlyBillsScreen';
 import LoginScreen from './src/pages/auth/LoginScreen';
 import SignupScreen from './src/pages/auth/SignupScreen';
 import ForgotPasswordScreen from './src/pages/auth/ForgotPasswordScreen';
@@ -89,7 +90,7 @@ function App() {
 
   const navigateToScreen = (screen, params) => {
     // Protected screens - only accessible after login
-    const protectedScreens = ['Dashboard', 'Animals', 'Milk', 'Quick Sale', 'Delivery Schedule', 'Milk Requests', 'Notifications', 'Chara', 'Profit/Loss', 'Milk Sales Report', 'Buyer', 'Seller', 'Payments', 'Pending Payments', 'Payments to collect', 'Admin List', 'Add Admin', 'Settings', 'Buyer Dashboard', 'Milk Request', 'My Schedule', 'Ledger', 'Transaction History', 'Payment History', 'Pending Payment'];
+    const protectedScreens = ['Dashboard', 'Animals', 'Milk', 'Quick Sale', 'Delivery Schedule', 'Milk Requests', 'Notifications', 'Chara', 'Profit/Loss', 'Milk Sales Report', 'Buyer', 'Seller', 'Payments', 'Pending Payments', 'Payments to collect', 'Admin List', 'Add Admin', 'Settings', 'Buyer Dashboard', 'Milk Request', 'My Schedule', 'Ledger', 'Monthly Bills', 'Transaction History', 'Payment History', 'Pending Payment'];
     
     // If trying to access protected screen without login, redirect to login
     if (protectedScreens.includes(screen) && !isAuthenticated) {
@@ -209,12 +210,20 @@ function App() {
         return <BuyerScheduleScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Ledger':
         return <BuyerLedgerScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
+      case 'Monthly Bills':
+        return <BuyerMonthlyBillsScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Transaction History':
         return <BuyerTransactionHistoryScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Payment History':
         return <BuyerPaymentHistoryScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Pending Payment':
-        return <BuyerPendingPaymentScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
+        return (
+          <BuyerPendingPaymentScreen
+            onNavigate={navigateToScreen}
+            onLogout={handleLogout}
+            initialPayUptoDate={navParams?.['Pending Payment']?.initialPayUptoDate}
+          />
+        );
       case 'Login/Signup':
         return <LoginScreen onNavigate={navigateToScreen} onLoginSuccess={handleLoginSuccess} />;
       case 'Signup':

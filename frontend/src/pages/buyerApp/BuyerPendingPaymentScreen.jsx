@@ -30,12 +30,18 @@ function payDateStr(p) {
     : '';
 }
 
-export default function BuyerPendingPaymentScreen({ onNavigate, onLogout }) {
+export default function BuyerPendingPaymentScreen({ onNavigate, onLogout, initialPayUptoDate = null }) {
   const [transactions, setTransactions] = useState([]);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [payUptoDate, setPayUptoDate] = useState(getTodayStr());
   const [upiSettings, setUpiSettings] = useState({ upiId: '', upiName: 'Farm', qrImageBase64: null });
+
+  useEffect(() => {
+    if (initialPayUptoDate && /^\d{4}-\d{2}-\d{2}$/.test(String(initialPayUptoDate))) {
+      setPayUptoDate(String(initialPayUptoDate));
+    }
+  }, [initialPayUptoDate]);
 
   useEffect(() => {
     loadData();

@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert, TouchableOpacity } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
-import Input from '../../components/common/Input';
 import { milkService } from '../../services/milk/milkService';
 import { paymentService } from '../../services/payments/paymentService';
 import { formatCurrency } from '../../utils/currencyUtils';
@@ -12,17 +11,6 @@ const formatDate = (d) => {
   const dt = typeof d === 'string' ? new Date(d) : d;
   return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
-
-function getMonthStart(d) {
-  const x = new Date(d);
-  x.setDate(1);
-  x.setHours(0, 0, 0, 0);
-  return x.toISOString().split('T')[0];
-}
-
-function getTodayStr() {
-  return new Date().toISOString().split('T')[0];
-}
 
 function ymdFromDate(d) {
   const dt = d instanceof Date ? d : new Date(d);
@@ -45,8 +33,7 @@ export default function BuyerLedgerScreen({ onNavigate, onLogout }) {
   const [payments, setPayments] = useState([]);
   const [settlements, setSettlements] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [dateFrom, setDateFrom] = useState(() => getMonthStart(new Date()));
-  const [dateTo, setDateTo] = useState(getTodayStr());
+  const [selectedMonth, setSelectedMonth] = useState('');
 
   useEffect(() => {
     loadData();
@@ -89,8 +76,7 @@ export default function BuyerLedgerScreen({ onNavigate, onLogout }) {
         const dt = new Date(t.date);
         if (isNaN(dt.getTime())) return false;
         if (cutoff && dt <= cutoff) return false;
-        const ymd = ymdFromDate(dt);
-        return ymd && ymd >= dateFrom && ymd <= dateTo;
+        return true;
       })
       .map((t) => {
         const dt = new Date(t.date);
@@ -112,8 +98,7 @@ export default function BuyerLedgerScreen({ onNavigate, onLogout }) {
         const dt = p?.paymentDate instanceof Date ? p.paymentDate : new Date(p?.paymentDate);
         if (isNaN(dt.getTime())) return false;
         if (cutoff && dt <= cutoff) return false;
-        const ymd = ymdFromDate(dt);
-        return ymd && ymd >= dateFrom && ymd <= dateTo;
+        return true;
       })
       .map((p) => {
         const dt = p?.paymentDate instanceof Date ? p.paymentDate : new Date(p?.paymentDate);
@@ -132,8 +117,7 @@ export default function BuyerLedgerScreen({ onNavigate, onLogout }) {
       .filter((s) => {
         const dt = s?.settledAt instanceof Date ? s.settledAt : new Date(s?.settledAt);
         if (isNaN(dt.getTime())) return false;
-        const ymd = ymdFromDate(dt);
-        return ymd && ymd >= dateFrom && ymd <= dateTo;
+        return true;
       })
       .map((s) => {
         const dt = s?.settledAt instanceof Date ? s.settledAt : new Date(s?.settledAt);
@@ -162,7 +146,7 @@ export default function BuyerLedgerScreen({ onNavigate, onLogout }) {
     });
 
     return withBalance.sort((a, b) => b.date - a.date);
-  }, [transactions, payments, settlements, latestCutoff, dateFrom, dateTo]);
+  }, [transactions, payments, settlements, latestCutoff]);
 
   const monthSections = useMemo(() => {
     const map = new Map();
@@ -175,6 +159,42 @@ export default function BuyerLedgerScreen({ onNavigate, onLogout }) {
     const keys = Array.from(map.keys()).sort((a, b) => b.localeCompare(a));
     return keys.map((k) => ({ monthKey: k, label: monthLabel(k), rows: map.get(k) }));
   }, [rows]);
+
+  useEffect(() => {
+    if (selectedMonth) return;
+    const first = monthSections[0]?.monthKey;
+    if (first) setSelectedMonth(first);
+  }, [monthSections, selectedMonth]);
+
+  const selectedRows = useMemo(() => {
+    if (!selectedMonth) return [];
+    const sec = monthSections.find((s) => s.monthKey === selectedMonth);
+    return sec?.rows || [];
+  }, [monthSections, selectedMonth]);
+
+  const tallyForSelectedMonth = useMemo(() => {
+    if (!selectedMonth) return { opening: 0, milkIn: 0, paymentsOut: 0, closing: 0 };
+    // Compute opening as closing balance of previous month in the filtered ledger rows.
+    const keys = monthSections.map((s) => s.monthKey).slice().sort((a, b) => a.localeCompare(b));
+    const idx = keys.indexOf(selectedMonth);
+    const prevKey = idx > 0 ? keys[idx - 1] : null;
+    const prevRows = prevKey ? (monthSections.find((s) => s.monthKey === prevKey)?.rows || []) : [];
+    const opening = prevRows.length > 0 ? Number(prevRows[0]?.balance || 0) : 0; // rows are desc; first is month latest balance
+
+    let milkIn = 0;
+    let paymentsOut = 0;
+    selectedRows.forEach((r) => {
+      if (r.kind === 'milk') milkIn += Number(r.debit) || 0;
+      if (r.kind === 'payment') paymentsOut += Number(r.credit) || 0;
+    });
+    const closing = opening + milkIn - paymentsOut;
+    return {
+      opening: Math.round(opening * 100) / 100,
+      milkIn: Math.round(milkIn * 100) / 100,
+      paymentsOut: Math.round(paymentsOut * 100) / 100,
+      closing: Math.round(closing * 100) / 100,
+    };
+  }, [monthSections, selectedMonth, selectedRows]);
 
   const pendingNow = useMemo(() => {
     // Pending (in filter period, after settlement cutoff): debits - credits.
@@ -194,60 +214,111 @@ export default function BuyerLedgerScreen({ onNavigate, onLogout }) {
         pendingAmount={pendingNow > 0 ? pendingNow : undefined}
       />
       <ScrollView style={styles.content}>
-        <View style={styles.filterCard}>
-          <Text style={styles.filterTitle}>Date filter</Text>
-          <View style={styles.filterRow}>
-            <View style={styles.filterField}>
-              <Text style={styles.filterLabel}>From</Text>
-              <Input value={dateFrom} onChangeText={setDateFrom} placeholder="YYYY-MM-DD" style={styles.filterInput} />
-            </View>
-            <View style={styles.filterField}>
-              <Text style={styles.filterLabel}>To</Text>
-              <Input value={dateTo} onChangeText={setDateTo} placeholder="YYYY-MM-DD" style={styles.filterInput} />
-            </View>
-          </View>
-          {!!latestCutoff && (
+        {!!latestCutoff && (
+          <View style={styles.cutoffStrip}>
             <Text style={styles.cutoffHint}>
               Note: Balance is calculated after last settlement ({formatDate(latestCutoff)}).
             </Text>
-          )}
-        </View>
-
+          </View>
+        )}
         {loading ? (
           <ActivityIndicator size="large" color="#4CAF50" style={styles.loader} />
         ) : monthSections.length === 0 ? (
           <Text style={styles.emptyText}>No ledger entries in this range.</Text>
         ) : (
-          monthSections.map((sec) => (
-            <View key={sec.monthKey} style={styles.monthCard}>
-              <Text style={styles.monthTitle}>{sec.label}</Text>
-              {sec.rows.map((r, idx) => (
+          <>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthTabs} contentContainerStyle={styles.monthTabsContent}>
+              {monthSections.map((sec) => {
+                const active = sec.monthKey === selectedMonth;
+                return (
+                  <TouchableOpacity
+                    key={sec.monthKey}
+                    style={[styles.monthTab, active && styles.monthTabActive]}
+                    onPress={() => setSelectedMonth(sec.monthKey)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.monthTabText, active && styles.monthTabTextActive]}>{sec.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.tallyCard}>
+              <View style={styles.tallyRow}>
+                <Text style={styles.tallyLabel}>Opening</Text>
+                <Text style={styles.tallyValue}>{formatCurrency(tallyForSelectedMonth.opening)}</Text>
+              </View>
+              <View style={styles.tallyRow}>
+                <Text style={styles.tallyLabel}>Milk (In)</Text>
+                <Text style={[styles.tallyValue, styles.tallyIn]}>{formatCurrency(tallyForSelectedMonth.milkIn)}</Text>
+              </View>
+              <View style={styles.tallyRow}>
+                <Text style={styles.tallyLabel}>Payments (Out)</Text>
+                <Text style={[styles.tallyValue, styles.tallyOut]}>{formatCurrency(tallyForSelectedMonth.paymentsOut)}</Text>
+              </View>
+              <View style={[styles.tallyRow, styles.tallyRowLast]}>
+                <Text style={styles.tallyLabelStrong}>Closing</Text>
+                <Text style={[styles.tallyValueStrong, tallyForSelectedMonth.closing > 0 ? styles.tallyDue : styles.tallyClear]}>
+                  {formatCurrency(tallyForSelectedMonth.closing)}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.monthCard}>
+              {selectedRows.map((r, idx) => (
                 <View
                   key={`${r.kind}-${r.ymd}-${idx}`}
-                  style={[styles.rowCard, r.kind === 'payment' && styles.paymentCard, r.kind === 'settlement' && styles.settlementCard]}
+                  style={[
+                    styles.entryCard,
+                    r.kind === 'milk' && styles.txMilkCard,
+                    r.kind === 'payment' && styles.txPaymentCard,
+                    r.kind === 'settlement' && styles.txSettlementCard,
+                  ]}
                 >
-                  <View style={styles.rowTop}>
-                    <Text style={styles.rowDate}>{formatDate(r.date)}</Text>
-                    {r.kind === 'milk' ? (
-                      <Text style={styles.debitText}>{formatCurrency(r.debit)}</Text>
-                    ) : r.kind === 'payment' ? (
-                      <Text style={styles.creditText}>{formatCurrency(r.credit)}</Text>
-                    ) : (
-                      <Text style={styles.markerText}>Reset</Text>
-                    )}
+                  <View style={styles.tallyEntryTop}>
+                    <View style={styles.tallyEntryLeft}>
+                      {r.kind !== 'settlement' ? (
+                        <View style={[styles.tallyBadge, r.kind === 'milk' ? styles.tallyBadgeMilk : styles.tallyBadgePayment]}>
+                          <Text style={styles.tallyBadgeText}>{r.kind === 'milk' ? 'Milk' : 'Pay'}</Text>
+                        </View>
+                      ) : (
+                        <View style={[styles.tallyBadge, styles.tallyBadgeSettlement]}>
+                          <Text style={styles.tallyBadgeText}>Reset</Text>
+                        </View>
+                      )}
+                      <Text style={styles.tallyEntryDate}>{formatDate(r.date)}</Text>
+                    </View>
+                    <View style={styles.tallyEntryRight}>
+                      {r.kind === 'milk' ? (
+                        <>
+                          <Text style={styles.tallyEntryLabel}>Debit</Text>
+                          <Text style={[styles.tallyEntryAmount, styles.tallyEntryDebit]}>{formatCurrency(r.debit)}</Text>
+                        </>
+                      ) : r.kind === 'payment' ? (
+                        <>
+                          <Text style={styles.tallyEntryLabel}>Credit</Text>
+                          <Text style={[styles.tallyEntryAmount, styles.tallyEntryCredit]}>{formatCurrency(r.credit)}</Text>
+                        </>
+                      ) : (
+                        <Text style={styles.markerText}>Reset</Text>
+                      )}
+                    </View>
                   </View>
-                  <Text style={styles.rowTitle}>{r.title}</Text>
+
+                  <Text style={styles.tallyEntryDetails}>{r.title}</Text>
                   {!!r.detail && <Text style={styles.rowDetail}>{r.detail}</Text>}
+
                   <View style={styles.rowBottom}>
                     <Text style={styles.balanceLabel}>Balance</Text>
-                    <Text style={[styles.balanceValue, r.balance > 0 ? styles.balanceDue : styles.balanceClear]}>
+                    <Text style={[styles.balanceValue, (r.balance || 0) > 0 ? styles.balanceDue : styles.balanceClear]}>
                       {formatCurrency(r.balance || 0)}
                     </Text>
                   </View>
                 </View>
               ))}
+              {selectedRows.length === 0 && <Text style={styles.emptyText}>No entries in this month.</Text>}
             </View>
-          ))
+          </>
         )}
       </ScrollView>
     </View>
@@ -259,21 +330,45 @@ const styles = StyleSheet.create({
   content: { flex: 1, padding: 16 },
   loader: { marginTop: 40 },
   emptyText: { textAlign: 'center', color: '#888', marginTop: 24, fontSize: 16 },
-  filterCard: {
+  cutoffStrip: {
     backgroundColor: '#fff',
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 2,
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E3F2FD',
   },
-  filterTitle: { fontSize: 16, fontWeight: '700', color: '#333', marginBottom: 10 },
-  filterRow: { flexDirection: 'row' },
-  filterField: { flex: 1, marginRight: 8 },
-  filterLabel: { fontSize: 12, color: '#666', marginBottom: 4 },
-  filterInput: { fontSize: 14 },
-  cutoffHint: { marginTop: 10, fontSize: 12, color: '#546e7a' },
+  cutoffHint: { fontSize: 12, color: '#546e7a', fontWeight: '600' },
+  monthTabs: { marginBottom: 10 },
+  monthTabsContent: { paddingRight: 6 },
+  monthTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#eeeeee',
+    marginRight: 8,
+  },
+  monthTabActive: { backgroundColor: '#1565C0' },
+  monthTabText: { color: '#444', fontWeight: '800', fontSize: 12 },
+  monthTabTextActive: { color: '#fff' },
+  tallyCard: {
+    backgroundColor: '#F5F9FF',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E3F2FD',
+    marginBottom: 12,
+  },
+  tallyRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
+  tallyRowLast: { marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#D7E9FF' },
+  tallyLabel: { fontSize: 12, color: '#546e7a', fontWeight: '700' },
+  tallyValue: { fontSize: 13, color: '#263238', fontWeight: '900' },
+  tallyIn: { color: '#2e7d32' },
+  tallyOut: { color: '#c62828' },
+  tallyLabelStrong: { fontSize: 13, color: '#263238', fontWeight: '900' },
+  tallyValueStrong: { fontSize: 14, fontWeight: '900' },
+  tallyDue: { color: '#c62828' },
+  tallyClear: { color: '#2e7d32' },
   monthCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -283,21 +378,30 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 3,
   },
-  monthTitle: { fontSize: 17, fontWeight: '800', color: '#333', marginBottom: 10 },
-  rowCard: { backgroundColor: '#f9f9f9', borderRadius: 10, padding: 12, marginBottom: 10 },
-  paymentCard: { borderLeftWidth: 4, borderLeftColor: '#4CAF50' },
-  settlementCard: { borderLeftWidth: 4, borderLeftColor: '#1565c0' },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  rowDate: { fontSize: 13, fontWeight: '700', color: '#333' },
-  rowTitle: { fontSize: 14, fontWeight: '700', color: '#222', marginTop: 6 },
+  entryCard: { borderRadius: 10, padding: 12, marginBottom: 10 },
+  txMilkCard: { backgroundColor: '#fff5f5', borderLeftWidth: 4, borderLeftColor: '#c62828' },
+  txPaymentCard: { backgroundColor: '#f1f8e9', borderLeftWidth: 4, borderLeftColor: '#2e7d32' },
+  txSettlementCard: { backgroundColor: '#e3f2fd', borderLeftWidth: 4, borderLeftColor: '#1565c0' },
   rowDetail: { fontSize: 12, color: '#666', marginTop: 4 },
-  debitText: { fontSize: 14, fontWeight: '800', color: '#c62828' },
-  creditText: { fontSize: 14, fontWeight: '800', color: '#2e7d32' },
   markerText: { fontSize: 12, fontWeight: '800', color: '#1565c0' },
   rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
   balanceLabel: { fontSize: 12, color: '#777' },
   balanceValue: { fontSize: 13, fontWeight: '800' },
   balanceDue: { color: '#c62828' },
   balanceClear: { color: '#2e7d32' },
+  tallyEntryTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  tallyEntryLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  tallyEntryRight: { alignItems: 'flex-end' },
+  tallyBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  tallyBadgeMilk: { backgroundColor: '#ffebee' },
+  tallyBadgePayment: { backgroundColor: '#e8f5e9' },
+  tallyBadgeSettlement: { backgroundColor: '#bbdefb' },
+  tallyBadgeText: { fontSize: 12, fontWeight: '900', color: '#333' },
+  tallyEntryDate: { fontSize: 14, fontWeight: '700', color: '#333' },
+  tallyEntryLabel: { fontSize: 11, fontWeight: '800', color: '#78909c' },
+  tallyEntryAmount: { fontSize: 15, fontWeight: '900' },
+  tallyEntryDebit: { color: '#c62828' },
+  tallyEntryCredit: { color: '#2e7d32' },
+  tallyEntryDetails: { fontSize: 13, color: '#455a64', marginTop: 6 },
 });
 

@@ -1170,17 +1170,25 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                                 if (e.kind === 'milk') {
                                   const tx = e.obj;
                                   return (
-                                    <View key={tx._id || `m-${idx}`} style={styles.transactionItem}>
-                                      <View style={styles.transactionRow}>
-                                        <Text style={styles.transactionDate}>{formatDate(new Date(tx.date))}</Text>
-                                        <Text style={styles.transactionAmount}>{formatCurrency(tx.totalAmount)}</Text>
+                                    <View key={tx._id || `m-${idx}`} style={[styles.transactionItem, styles.txMilkCard]}>
+                                      <View style={styles.tallyEntryTop}>
+                                        <View style={styles.tallyEntryLeft}>
+                                          <View style={[styles.tallyBadge, styles.tallyBadgeMilk]}>
+                                            <Text style={styles.tallyBadgeText}>Milk</Text>
+                                          </View>
+                                          <Text style={styles.tallyEntryDate}>{formatDate(new Date(tx.date))}</Text>
+                                        </View>
+                                        <View style={styles.tallyEntryRight}>
+                                          <Text style={styles.tallyEntryLabel}>Debit</Text>
+                                          <Text style={[styles.tallyEntryAmount, styles.tallyEntryDebit]}>
+                                            {formatCurrency(tx.totalAmount)}
+                                          </Text>
+                                        </View>
                                       </View>
-                                      <View style={styles.transactionRow}>
-                                        <Text style={styles.transactionDetails}>
-                                          {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource || 'Cow'} ·{' '}
-                                          {Number(tx.quantity || 0).toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
-                                        </Text>
-                                      </View>
+                                      <Text style={styles.tallyEntryDetails}>
+                                        {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource || 'Cow'} ·{' '}
+                                        {Number(tx.quantity || 0).toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
+                                      </Text>
                                       {tx.notes && <Text style={styles.transactionNotes}>{tx.notes}</Text>}
                                       {canEditUsers && (
                                         <View style={styles.txActionRow}>
@@ -1197,16 +1205,24 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                                 }
                                 const pay = e.obj;
                                 return (
-                                  <View key={pay._id || `p-${idx}`} style={styles.transactionItem}>
-                                    <View style={styles.transactionRow}>
-                                      <Text style={styles.transactionDate}>{formatDate(pay.paymentDate)}</Text>
-                                      <Text style={styles.transactionAmount}>{formatCurrency(pay.amount)}</Text>
+                                  <View key={pay._id || `p-${idx}`} style={[styles.transactionItem, styles.txPaymentCard]}>
+                                    <View style={styles.tallyEntryTop}>
+                                      <View style={styles.tallyEntryLeft}>
+                                        <View style={[styles.tallyBadge, styles.tallyBadgePayment]}>
+                                          <Text style={styles.tallyBadgeText}>Pay</Text>
+                                        </View>
+                                        <Text style={styles.tallyEntryDate}>{formatDate(pay.paymentDate)}</Text>
+                                      </View>
+                                      <View style={styles.tallyEntryRight}>
+                                        <Text style={styles.tallyEntryLabel}>Credit</Text>
+                                        <Text style={[styles.tallyEntryAmount, styles.tallyEntryCredit]}>
+                                          {formatCurrency(pay.amount)}
+                                        </Text>
+                                      </View>
                                     </View>
-                                    <View style={styles.transactionRow}>
-                                      <Text style={styles.transactionDetails}>
-                                        {[pay.paymentType, pay.paymentDirection].filter(Boolean).join(' · ') || 'Payment'}
-                                      </Text>
-                                    </View>
+                                    <Text style={styles.tallyEntryDetails}>
+                                      {[pay.paymentType, pay.paymentDirection].filter(Boolean).join(' · ') || 'Payment'}
+                                    </Text>
                                     {pay.notes ? <Text style={styles.transactionNotes}>{pay.notes}</Text> : null}
                                     {canEditUsers && (
                                       <View style={styles.txActionRow}>
@@ -2398,6 +2414,29 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 8,
   },
+  txMilkCard: {
+    backgroundColor: '#fff5f5',
+    borderLeftWidth: 4,
+    borderLeftColor: '#c62828',
+  },
+  txPaymentCard: {
+    backgroundColor: '#f1f8e9',
+    borderLeftWidth: 4,
+    borderLeftColor: '#2e7d32',
+  },
+  tallyEntryTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  tallyEntryLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  tallyEntryRight: { alignItems: 'flex-end' },
+  tallyBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  tallyBadgeMilk: { backgroundColor: '#ffebee' },
+  tallyBadgePayment: { backgroundColor: '#e8f5e9' },
+  tallyBadgeText: { fontSize: 12, fontWeight: '900', color: '#333' },
+  tallyEntryDate: { fontSize: 14, fontWeight: '700', color: '#333' },
+  tallyEntryLabel: { fontSize: 11, fontWeight: '800', color: '#78909c' },
+  tallyEntryAmount: { fontSize: 15, fontWeight: '900' },
+  tallyEntryDebit: { color: '#c62828' },
+  tallyEntryCredit: { color: '#2e7d32' },
+  tallyEntryDetails: { fontSize: 13, color: '#455a64', marginTop: 6 },
   transactionRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
