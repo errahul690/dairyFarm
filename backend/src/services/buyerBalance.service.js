@@ -1,6 +1,6 @@
 const { MilkTransaction } = require("../models/milk");
 const { Payment } = require("../models/payments");
-const { Buyer } = require("../models/buyers");
+const { Buyer, findBuyerByUserId } = require("../models/buyers");
 const { User } = require("../models/users");
 const { upsertBuyerBalance } = require("../models/buyerBalances");
 const { upsertBuyerMonthlySummary } = require("../models/buyerMonthlySummaries");
@@ -14,12 +14,25 @@ function monthKeyFromDate(dt) {
 }
 
 /**
+ * MilkTransaction.buyerId is historically the consumer User _id (see milk model).
+ * Some callers may pass Buyer _id. Resolve either way so rebuild always runs.
+ */
+async function resolveBuyerFromId(buyerIdOrUserId) {
+  if (!buyerIdOrUserId) return null;
+  let buyer = await Buyer.findById(buyerIdOrUserId);
+  if (buyer) return buyer;
+  const user = await User.findById(buyerIdOrUserId);
+  if (!user) return null;
+  return findBuyerByUserId(user._id);
+}
+
+/**
  * Rebuild buyer balance + monthly summaries from source-of-truth collections.
  * Settlement is intentionally ignored: pending = lifetime milk sales - lifetime payments.
  */
 async function rebuildBuyerBalanceAndMonthly(buyerId) {
   if (!buyerId) return null;
-  const buyer = await Buyer.findById(buyerId);
+  const buyer = await resolveBuyerFromId(buyerId);
   if (!buyer) return null;
   const user = await User.findById(buyer.userId);
   const mobile = (user?.mobile || "").trim();
