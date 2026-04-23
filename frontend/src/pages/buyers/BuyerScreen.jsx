@@ -18,6 +18,7 @@ import { sellerService } from '../../services/sellers/sellerService';
 import { paymentService } from '../../services/payments/paymentService';
 import { userService } from '../../services/users/userService';
 import { formatCurrency } from '../../utils/currencyUtils';
+import { getYmdInIST } from '../../utils/dateUtils';
 import { authService } from '../../services/auth/authService';
 import { MILK_SOURCE_TYPES } from '../../constants';
 
@@ -75,12 +76,10 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     setPendingScrollToMobile(null);
   }, []);
 
+  /** YYYY-MM in Asia/Kolkata (matches milk/payment business dates). */
   const monthKeyFromDate = (d) => {
-    const dt = d instanceof Date ? d : new Date(d);
-    if (isNaN(dt.getTime())) return '';
-    const y = dt.getFullYear();
-    const m = String(dt.getMonth() + 1).padStart(2, '0');
-    return `${y}-${m}`;
+    const ymd = getYmdInIST(d);
+    return ymd && ymd.length >= 7 ? ymd.slice(0, 7) : '';
   };
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monthLabel = (monthKey) => {
@@ -1072,11 +1071,6 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
 
                         const selectedMonth = monthTabByBuyer[phone] || monthKeys[0] || '';
 
-                        const monthStart = selectedMonth ? new Date(`${selectedMonth}-01T00:00:00`) : null;
-                        const monthEnd = selectedMonth
-                          ? new Date(new Date(`${selectedMonth}-01T00:00:00`).getFullYear(), new Date(`${selectedMonth}-01T00:00:00`).getMonth() + 1, 0, 23, 59, 59, 999)
-                          : null;
-
                         const allEntriesAsc = [
                           ...milkList.map((t) => ({
                             kind: 'milk',
@@ -1094,9 +1088,10 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                           .sort((a, b) => a.date.getTime() - b.date.getTime());
 
                         let opening = 0;
-                        if (monthStart) {
+                        if (selectedMonth) {
                           allEntriesAsc.forEach((e) => {
-                            if (e.date < monthStart) {
+                            const ymd = getYmdInIST(e.date);
+                            if (ymd < `${selectedMonth}-01`) {
                               opening += e.kind === 'milk' ? e.amount : -e.amount;
                             }
                           });
@@ -1104,14 +1099,106 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
 
                         let inAmt = 0;
                         let outAmt = 0;
-                        const monthEntries = monthStart && monthEnd
-                          ? allEntriesAsc.filter((e) => e.date >= monthStart && e.date <= monthEnd)
+                        const monthEntries = selectedMonth
+                          ? allEntriesAsc.filter((e) => getYmdInIST(e.date).slice(0, 7) === selectedMonth)
                           : allEntriesAsc;
                         monthEntries.forEach((e) => {
                           if (e.kind === 'milk') inAmt += e.amount;
                           else outAmt += e.amount;
                         });
                         const closing = opening + inAmt - outAmt;
+
+                        // FIFO across months (same idea as buyer Monthly Bills): later payments clear oldest dues.
+                        const allMonthKeysAsc = Array.from(monthKeysSet)
+                          .filter(Boolean)
+                          .sort((a, b) => String(a).localeCompare(String(b)));
+                        const milkByMonth = {};
+                        milkList.forEach((t) => {
+                          const mk0 = monthKeyFromDate(t.date);
+                          if (!mk0) return;
+                          milkByMonth[mk0] = (milkByMonth[mk0] || 0) + (Number(t.totalAmount) || 0);
+                        });
+                        const firstMk = allMonthKeysAsc[0] || '';
+                        let openingCarry = 0;
+                        if (firstMk) {
+                          milkList.forEach((t) => {
+                            const mk0 = monthKeyFromDate(t.date);
+                            if (mk0 && mk0 < firstMk) openingCarry += Number(t.totalAmount) || 0;
+                          });
+                          payList.forEach((p) => {
+                            const dt = p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate);
+                            const mk0 = monthKeyFromDate(dt);
+                            if (mk0 && mk0 < firstMk) openingCarry -= Number(p.amount) || 0;
+                          });
+                        }
+                        openingCarry = Math.max(0, openingCarry);
+                        const fifoBuckets = [];
+                        if (openingCarry > 0 && firstMk) {
+                          fifoBuckets.push({
+                            monthKey: firstMk,
+                            kind: 'carry',
+                            label: `${monthLabel(firstMk)} · prior due`,
+                            remaining: openingCarry,
+                          });
+                        }
+                        allMonthKeysAsc.forEach((mk0) => {
+                          fifoBuckets.push({
+                            monthKey: mk0,
+                            kind: 'milk',
+                            label: `${monthLabel(mk0)} · milk`,
+                            remaining: Math.max(0, milkByMonth[mk0] || 0),
+                          });
+                        });
+
+                        const paySorted = (payList || [])
+                          .map((p) => ({
+                            id: p._id,
+                            date: p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate),
+                            amount: Number(p.amount) || 0,
+                          }))
+                          .filter((p) => p.date instanceof Date && !isNaN(p.date.getTime()))
+                          .sort((a, b) => a.date.getTime() - b.date.getTime() || String(a.id || '').localeCompare(String(b.id || '')));
+
+                        let bi = 0;
+                        const fifoAllocLog = [];
+                        paySorted.forEach((p) => {
+                          if (!(p.amount > 0)) return;
+                          let left = p.amount;
+                          const allocations = [];
+                          while (left > 0.000001 && bi < fifoBuckets.length) {
+                            if (fifoBuckets[bi].remaining <= 0.000001) {
+                              bi += 1;
+                              continue;
+                            }
+                            const take = Math.min(left, fifoBuckets[bi].remaining);
+                            fifoBuckets[bi].remaining -= take;
+                            left -= take;
+                            allocations.push({
+                              label: fifoBuckets[bi].label,
+                              monthKey: fifoBuckets[bi].monthKey,
+                              kind: fifoBuckets[bi].kind,
+                              amount: Math.round(take * 100) / 100,
+                            });
+                            if (fifoBuckets[bi].remaining <= 0.000001) bi += 1;
+                          }
+                          fifoAllocLog.push({
+                            id: p.id,
+                            date: p.date,
+                            total: p.amount,
+                            allocations,
+                            unallocated: Math.round(Math.max(0, left) * 100) / 100,
+                          });
+                        });
+
+                        const fifoRemainingByMonth = {};
+                        fifoBuckets.forEach((b) => {
+                          fifoRemainingByMonth[b.monthKey] =
+                            (fifoRemainingByMonth[b.monthKey] || 0) + Math.round((b.remaining || 0) * 100) / 100;
+                        });
+                        const idxSel = allMonthKeysAsc.indexOf(selectedMonth);
+                        const keysUpToFifo = idxSel >= 0 ? allMonthKeysAsc.slice(0, idxSel + 1) : [];
+                        const fifoRemainingUpTo = keysUpToFifo.reduce((s, k) => s + (Number(fifoRemainingByMonth[k]) || 0), 0);
+                        const fifoPaid = fifoRemainingUpTo <= 0.0001;
 
                         const monthEntriesDesc = [...monthEntries].sort((a, b) => b.date.getTime() - a.date.getTime());
 
@@ -1152,6 +1239,38 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                                 <Text style={styles.tallyLabelStrong}>Closing</Text>
                                 <Text style={[styles.tallyValueStrong, closing > 0 ? styles.tallyDue : styles.tallyClear]}>{formatCurrency(closing)}</Text>
                               </View>
+                              {fifoAllocLog.length > 0 && (
+                                <View style={styles.fifoAllocWrap}>
+                                  <Text style={styles.fifoAllocHeading}>FIFO — payment adjustments (by date)</Text>
+                                  {fifoAllocLog.map((row, ri) => (
+                                    <View key={String(row.id || `pay-${ri}`)} style={styles.fifoAllocItem}>
+                                      <Text style={styles.fifoAllocItemTitle}>
+                                        {formatDate(row.date)} ({getYmdInIST(row.date)})
+                                      </Text>
+                                      <Text style={styles.fifoAllocItemPay}>Payment {formatCurrency(row.total)}</Text>
+                                      {row.allocations.map((a, ai) => (
+                                        <Text key={`${String(row.id || ri)}-a-${ai}`} style={styles.fifoAllocAllocLine}>
+                                          → {a.label}: {formatCurrency(a.amount)}
+                                        </Text>
+                                      ))}
+                                      {row.unallocated > 0.0001 ? (
+                                        <Text style={styles.fifoAllocUnalloc}>
+                                          Not applied to older dues (advance / overpay): {formatCurrency(row.unallocated)}
+                                        </Text>
+                                      ) : null}
+                                    </View>
+                                  ))}
+                                </View>
+                              )}
+                              <View style={styles.tallyRow}>
+                                <Text style={styles.tallyLabel}>FIFO (all months)</Text>
+                                <Text style={[styles.tallyValueStrong, fifoPaid ? styles.tallyClear : styles.tallyDue]}>
+                                  {fifoPaid ? 'Paid' : formatCurrency(fifoRemainingUpTo)}
+                                </Text>
+                              </View>
+                              <Text style={styles.fifoHint}>
+                                Closing = this month only. FIFO applies later payments to oldest dues (same as Monthly Bills).
+                              </Text>
                             </View>
 
                             {canEditUsers && (
@@ -2336,6 +2455,27 @@ const styles = StyleSheet.create({
   tallyValueStrong: { fontSize: 14, fontWeight: '900' },
   tallyDue: { color: '#c62828' },
   tallyClear: { color: '#2e7d32' },
+  fifoHint: { fontSize: 11, color: '#78909c', marginTop: 4, lineHeight: 15 },
+  fifoAllocWrap: {
+    marginTop: 8,
+    marginBottom: 6,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E3F2FD',
+  },
+  fifoAllocHeading: { fontSize: 12, fontWeight: '900', color: '#1565C0', marginBottom: 8 },
+  fifoAllocItem: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#ECEFF1',
+  },
+  fifoAllocItemTitle: { fontSize: 12, fontWeight: '800', color: '#37474f' },
+  fifoAllocItemPay: { fontSize: 12, fontWeight: '800', color: '#263238', marginTop: 4 },
+  fifoAllocAllocLine: { fontSize: 11, color: '#455a64', marginTop: 3, fontWeight: '600' },
+  fifoAllocUnalloc: { fontSize: 11, color: '#6a1b9a', marginTop: 4, fontWeight: '700' },
   monthActionsRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
   addPayBtn: {
     backgroundColor: '#1565C0',
