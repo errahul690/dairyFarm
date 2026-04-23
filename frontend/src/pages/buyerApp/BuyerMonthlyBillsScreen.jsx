@@ -6,6 +6,7 @@ import { paymentService } from '../../services/payments/paymentService';
 import { formatCurrency } from '../../utils/currencyUtils';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 function monthLabel(monthKey) {
   const [y, m] = String(monthKey || '').split('-').map(Number);
   if (!y || !m) return String(monthKey || '');
@@ -55,7 +56,8 @@ export default function BuyerMonthlyBillsScreen({ onNavigate, onLogout }) {
     (payments || []).forEach((p) => {
       const dt = p?.paymentDate instanceof Date ? p.paymentDate : new Date(p?.paymentDate);
       if (isNaN(dt.getTime())) return;
-      const mk = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+      const ist = new Date(dt.getTime() + IST_OFFSET_MS);
+      const mk = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}`;
       map[mk] = (map[mk] || 0) + (Number(p.amount) || 0);
     });
     return map;
@@ -66,14 +68,23 @@ export default function BuyerMonthlyBillsScreen({ onNavigate, onLogout }) {
     // charges per month = milkIn; payments per month = paymentsOut (from summaries) OR actual payments.
     // We prefer month summaries' paymentsOut for consistency with bills. If missing, fallback to actual payments by month.
     const chrono = (Array.isArray(monthly) ? monthly : []).slice().sort((a, b) => String(a.monthKey).localeCompare(String(b.monthKey)));
-    const buckets = chrono.map((m) => ({
-      monthKey: m.monthKey,
-      charge: Math.max(0, Number(m.milkIn) || 0),
-      remaining: Math.max(0, Number(m.milkIn) || 0),
-    }));
+    if (chrono.length === 0) return { remainingByMonth: {} };
+
+    // Buckets = month-wise charges. Include opening carry in the first month so older dues can be cleared by later payments.
+    const buckets = [];
+    const first = chrono[0];
+    const openingCarry = Math.max(0, Number(first?.openingBalance) || 0);
+    if (openingCarry > 0) {
+      buckets.push({ monthKey: first.monthKey, charge: openingCarry, remaining: openingCarry, isCarry: true });
+    }
+    chrono.forEach((m) => {
+      const charge = Math.max(0, Number(m.milkIn) || 0);
+      buckets.push({ monthKey: m.monthKey, charge, remaining: charge, isCarry: false });
+    });
     const paymentsChrono = chrono.map((m) => ({
       monthKey: m.monthKey,
-      amount: Number(m.paymentsOut) || paymentByMonth[m.monthKey] || 0,
+      // Use the larger of stored month summary or actual payments for that month (handles rebuild lag).
+      amount: Math.max(Number(m.paymentsOut) || 0, Number(paymentByMonth[m.monthKey]) || 0),
     }));
 
     let i = 0;
@@ -93,7 +104,7 @@ export default function BuyerMonthlyBillsScreen({ onNavigate, onLogout }) {
 
     const remainingByMonth = {};
     buckets.forEach((b) => {
-      remainingByMonth[b.monthKey] = Math.round((b.remaining || 0) * 100) / 100;
+      remainingByMonth[b.monthKey] = (remainingByMonth[b.monthKey] || 0) + (Math.round((b.remaining || 0) * 100) / 100);
     });
 
     return { remainingByMonth };

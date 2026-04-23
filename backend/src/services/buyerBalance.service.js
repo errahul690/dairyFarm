@@ -13,6 +13,14 @@ function monthKeyFromDate(dt) {
   return `${y}-${m}`;
 }
 
+function normalizeMobile10(mobile) {
+  const raw = String(mobile || "").trim();
+  if (!raw) return "";
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return raw;
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
 /**
  * MilkTransaction.buyerId is historically the consumer User _id (see milk model).
  * Some callers may pass Buyer _id. Resolve either way so rebuild always runs.
@@ -36,11 +44,23 @@ async function rebuildBuyerBalanceAndMonthly(buyerId) {
   if (!buyer) return null;
   const user = await User.findById(buyer.userId);
   const mobile = (user?.mobile || "").trim();
+  const mobile10 = normalizeMobile10(mobile);
   if (!mobile) return null;
 
   const [sales, payments] = await Promise.all([
-    MilkTransaction.find({ type: "sale", buyerPhone: mobile }).sort({ date: 1 }).lean(),
-    Payment.find({ isSettlement: { $ne: true }, paymentDirection: { $ne: "to_seller" }, customerMobile: mobile })
+    MilkTransaction.find({
+      type: "sale",
+      // buyerPhone is usually 10-digit; but keep a resilient suffix match to handle any formatting drift.
+      buyerPhone: mobile10 ? { $regex: `${mobile10}$` } : mobile,
+    })
+      .sort({ date: 1 })
+      .lean(),
+    Payment.find({
+      isSettlement: { $ne: true },
+      paymentDirection: { $ne: "to_seller" },
+      // customerMobile may be stored as +91..., so match by last 10 digits.
+      customerMobile: mobile10 ? { $regex: `${mobile10}$` } : mobile,
+    })
       .sort({ paymentDate: 1 })
       .lean(),
   ]);
