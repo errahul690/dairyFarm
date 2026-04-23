@@ -8,6 +8,7 @@ import {
   Alert,
   Modal,
   Switch,
+  Linking,
 } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import Input from '../../components/common/Input';
@@ -74,6 +75,21 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     if (y == null || !contentScrollRef.current) return;
     contentScrollRef.current.scrollTo({ y: Math.max(0, y - 16), animated: true });
     setPendingScrollToMobile(null);
+  }, []);
+
+  const openDialer = useCallback(async (rawMobile) => {
+    const digits = String(rawMobile || '').replace(/\D/g, '');
+    const n = digits.length > 10 ? digits.slice(-10) : digits;
+    if (!n || n.length < 10) {
+      Alert.alert('Call', 'Mobile number missing or invalid.');
+      return;
+    }
+    const url = `tel:${n}`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Call', 'Could not open phone dialer.');
+    }
   }, []);
 
   /** YYYY-MM in Asia/Kolkata (matches milk/payment business dates). */
@@ -942,6 +958,15 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                           </View>
                         )}
                         <View style={styles.buyerActionsRow}>
+                          {!!String(buyer.phone || '').trim() && (
+                            <TouchableOpacity
+                              style={styles.callButton}
+                              onPress={() => openDialer(buyer.phone)}
+                              activeOpacity={0.7}
+                            >
+                              <Text style={styles.callButtonText}>Call</Text>
+                            </TouchableOpacity>
+                          )}
                           {canEditUsers && buyer.userId && (
                             <TouchableOpacity
                               style={styles.editButton}
@@ -2285,6 +2310,17 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
+  },
+  callButton: {
+    backgroundColor: '#00897B',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  callButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   addAsSellerButton: {
     backgroundColor: '#2196F3',

@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  Linking,
 } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
 import Input from '../../components/common/Input';
@@ -35,6 +36,20 @@ function normalizeMobile(m) {
   if (!digits) return raw;
   // keep last 10 digits for India numbers (handles +91/0 prefixes)
   return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+async function openDialer(rawMobile) {
+  const n = normalizeMobile(rawMobile);
+  if (!n || n.length < 10) {
+    Alert.alert('Call', 'Mobile number missing or invalid.');
+    return;
+  }
+  const url = `tel:${n}`;
+  try {
+    await Linking.openURL(url);
+  } catch {
+    Alert.alert('Call', 'Could not open phone dialer.');
+  }
 }
 
 function addDaysYmd(ymd, deltaDays) {
@@ -714,6 +729,13 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                     >
                       <Text style={styles.buyerPayLink}>Pay</Text>
                     </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => openDialer(b.mobile)}
+                      disabled={!String(b.mobile || '').trim()}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.buyerCallLink}>Call</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
                 {String(b.mobile || '').trim() ? (
@@ -1124,6 +1146,7 @@ const styles = StyleSheet.create({
   buyerEditLink: { fontSize: 12, color: '#2e7d32', fontWeight: '800' },
   nameCellActions: { alignItems: 'flex-end', gap: 6 },
   buyerPayLink: { fontSize: 12, color: '#1565C0', fontWeight: '900' },
+  buyerCallLink: { fontSize: 12, color: '#00897B', fontWeight: '900' },
   buyerMobileText: { marginTop: 2, fontSize: 11, color: '#666' },
   buyerBalanceText: { marginTop: 2, fontSize: 11, fontWeight: '700' },
   buyerBalanceDue: { color: '#c62828' },
