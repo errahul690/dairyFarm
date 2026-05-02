@@ -62,7 +62,8 @@ const milkTxSchema = z.object({
   fixedPrice: z.number().nonnegative().optional(),
   paymentType: z.enum(["cash", "credit"]).optional(),
   amountReceived: z.number().nonnegative().optional(),
-  milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional()
+  milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional(),
+  deliveryShift: z.enum(["morning", "evening"]).optional()
 });
 
 const listMilkTransactions = async (req, res) => {
@@ -212,6 +213,7 @@ const quickSaleSchema = z.object({
   milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional(),
   /** Optional sale calendar day YYYY-MM-DD (IST), or ISO string (first 10 chars used). Defaults to today. */
   date: z.string().optional(),
+  deliveryShift: z.enum(["morning", "evening"]).optional(),
 });
 
 /**
@@ -241,6 +243,7 @@ const createQuickSale = async (req, res) => {
   let quantity = parsed.data.quantity;
   let pricePerLiter = parsed.data.pricePerLiter;
   const bodyMilkSource = parsed.data.milkSource;
+  const bodyDeliveryShift = parsed.data.deliveryShift;
 
   try {
     const user = await findUserByMobile(buyerMobile);
@@ -310,6 +313,82 @@ const createQuickSale = async (req, res) => {
         return res.status(201).json({ transactions });
       }
 
+      // Morning / evening (no deliveryItems): default litres from buyer at buyer.rate
+      const mq = Number(buyer.morningQuantity) || 0;
+      const eq = Number(buyer.eveningQuantity) || 0;
+      if (!items && (mq > 0 || eq > 0)) {
+        const baseRate = Number(buyer.rate) || 0;
+        const milkSource =
+          buyer.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(String(buyer.milkSource).toLowerCase())
+            ? String(buyer.milkSource).toLowerCase()
+            : "cow";
+        if (!(baseRate > 0)) {
+          return res.status(400).json({
+            error: "Set buyer rate (₹/L) for morning/evening delivery.",
+          });
+        }
+
+        // One shift only when client sends deliveryShift (Quick Sale per column)
+        if (bodyDeliveryShift === "morning" || bodyDeliveryShift === "evening") {
+          const defaultQ = bodyDeliveryShift === "morning" ? mq : eq;
+          let q = defaultQ;
+          if (quantity != null && quantity > 0) q = quantity;
+          if (!(q > 0)) {
+            return res.status(400).json({
+              error: `Set ${bodyDeliveryShift} quantity (litres) on the buyer or pass quantity in the request.`,
+            });
+          }
+          const totalAmount = Math.round(q * baseRate * 100) / 100;
+          const payload = {
+            date: saleDay.toISOString(),
+            quantity: q,
+            pricePerLiter: baseRate,
+            totalAmount,
+            buyer: buyerName,
+            buyerPhone: buyerMobile,
+            buyerId: user._id,
+            paymentType: "credit",
+            notes: `Quick sale · ${bodyDeliveryShift}`,
+            milkSource,
+            deliveryShift: bodyDeliveryShift,
+          };
+          const tx = await addMilkTransaction({ type: "sale", ...payload });
+          if (tx?.buyerId) await safeRebuildBuyerBalance(tx.buyerId);
+          return res.status(201).json(tx);
+        }
+
+        // No deliveryShift: record both shifts in one tap (legacy / bulk)
+        const transactions = [];
+        const pushShift = async (q, shift) => {
+          if (!(q > 0)) return;
+          const totalAmount = Math.round(q * baseRate * 100) / 100;
+          const payload = {
+            date: saleDay.toISOString(),
+            quantity: q,
+            pricePerLiter: baseRate,
+            totalAmount,
+            buyer: buyerName,
+            buyerPhone: buyerMobile,
+            buyerId: user._id,
+            paymentType: "credit",
+            notes: `Quick sale · ${shift}`,
+            milkSource,
+            deliveryShift: shift,
+          };
+          const tx = await addMilkTransaction({ type: "sale", ...payload });
+          transactions.push(tx);
+        };
+        await pushShift(mq, "morning");
+        await pushShift(eq, "evening");
+        if (transactions.length === 0) {
+          return res.status(400).json({
+            error: "Set at least one of morning or evening quantity (litres) on the buyer.",
+          });
+        }
+        await safeRebuildBuyerBalance(user._id);
+        return res.status(201).json(transactions.length === 1 ? transactions[0] : { transactions });
+      }
+
       quantity = Number(buyer.quantity) || 0;
       pricePerLiter = Number(buyer.rate) || 0;
     }
@@ -340,6 +419,10 @@ const createQuickSale = async (req, res) => {
       notes: "Quick sale",
       milkSource,
     };
+    if (bodyDeliveryShift === "morning" || bodyDeliveryShift === "evening") {
+      payload.deliveryShift = bodyDeliveryShift;
+      payload.notes = `Quick sale · ${bodyDeliveryShift}`;
+    }
 
     const tx = await addMilkTransaction({ type: "sale", ...payload });
     if (tx?.buyerId) await safeRebuildBuyerBalance(tx.buyerId);

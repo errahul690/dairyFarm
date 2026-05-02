@@ -18,6 +18,19 @@ const BuyerSchema = new mongoose.Schema({
     required: false,
     min: 0
   },
+  /** When set (and no deliveryItems), Quick Sale uses two columns: morning vs evening litres at buyer.rate. */
+  morningQuantity: {
+    type: Number,
+    required: false,
+    min: 0,
+    default: undefined
+  },
+  eveningQuantity: {
+    type: Number,
+    required: false,
+    min: 0,
+    default: undefined
+  },
   rate: {
     type: Number,
     required: false,

@@ -101,6 +101,20 @@ function padMondayFirst(jsDaySun0) {
   return jsDaySun0 === 0 ? 6 : jsDaySun0 - 1;
 }
 
+/** Legacy sales without deliveryShift count as morning for display. */
+function txDeliveryShift(t) {
+  if (t && t.deliveryShift === 'evening') return 'evening';
+  return 'morning';
+}
+
+function buyerUsesShiftColumns(buyer) {
+  const hasItems = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0;
+  if (hasItems) return false;
+  const mq = Number(buyer.morningQuantity) || 0;
+  const eq = Number(buyer.eveningQuantity) || 0;
+  return mq > 0 || eq > 0;
+}
+
 function buildMonthCells(year, month0) {
   const dim = new Date(year, month0 + 1, 0).getDate();
   const firstDow = new Date(year, month0, 1).getDay();
@@ -342,17 +356,64 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     [transactions]
   );
 
+  const salesForBuyerDateShift = useCallback(
+    (mobile, dateStr, shift) => {
+      return salesForBuyerDate(mobile, dateStr).filter((t) => txDeliveryShift(t) === shift);
+    },
+    [salesForBuyerDate]
+  );
+
   const buyersSorted = useMemo(() => {
     return [...buyers]
       .filter((b) => b.mobile)
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'en'));
   }, [buyers]);
 
+  const hasAnyShiftBuyer = useMemo(
+    () => buyersSorted.some((b) => buyerUsesShiftColumns(b)),
+    [buyersSorted]
+  );
+
   const dateStr = selectedDateYmd;
   const isViewingToday = selectedDateYmd === getTodayYmdIST();
 
+  const handleDeliveredShift = async (buyer, ds, shift) => {
+    if (!buyer.mobile) return;
+    const txs = salesForBuyerDateShift(buyer.mobile, ds, shift);
+    if (txs.length > 0) {
+      Alert.alert('Already delivered', `This ${shift === 'morning' ? 'morning' : 'evening'} delivery is already recorded.`);
+      return;
+    }
+    const mq = Number(buyer.morningQuantity) || 0;
+    const eq = Number(buyer.eveningQuantity) || 0;
+    const q = shift === 'morning' ? mq : eq;
+    const rate = Number(buyer.rate) || 0;
+    const src =
+      buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(String(buyer.milkSource).toLowerCase())
+        ? String(buyer.milkSource).toLowerCase()
+        : 'cow';
+    if (!(q > 0 && rate > 0)) {
+      Alert.alert('Set shift & rate', 'Set morning/evening litres and ₹/L rate for this buyer first.');
+      return;
+    }
+    const saleYmd = String(ds || '').trim() || selectedDateYmd;
+    try {
+      setActionLoading(`${buyer.mobile}-${ds}-${shift}`);
+      await milkService.quickSale(buyer.mobile, q, rate, src, saleYmd, { deliveryShift: shift });
+      await loadData(true);
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Quick sale failed.');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleDelivered = async (buyer, ds) => {
     if (!buyer.mobile) return;
+    if (buyerUsesShiftColumns(buyer)) {
+      Alert.alert('Morning / Evening', 'Use the Morning or Evening column to record each shift.');
+      return;
+    }
     const txs = salesForBuyerDate(buyer.mobile, ds);
     if (txs.length > 0) {
       Alert.alert('Already delivered', 'This day already has sale(s).');
@@ -379,7 +440,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
   };
 
-  const openCustom = (buyer, ds) => {
+  const openCustom = (buyer, ds, deliveryShift = null) => {
     if (!buyer.mobile) return;
     const hasDeliveryItems = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0;
     if (hasDeliveryItems) {
@@ -399,10 +460,16 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
         dateStr: ds,
         multiLine: true,
         lines,
+        deliveryShift: null,
       });
       return;
     }
-    const dailyQuantity = Number(buyer.quantity) || 0;
+    const mq = Number(buyer.morningQuantity) || 0;
+    const eq = Number(buyer.eveningQuantity) || 0;
+    const useShift = (mq > 0 || eq > 0) && (deliveryShift === 'morning' || deliveryShift === 'evening');
+    const dailyQuantity = useShift
+      ? (deliveryShift === 'morning' ? mq : eq)
+      : Number(buyer.quantity) || 0;
     const rate = Number(buyer.rate) || 0;
     const src = (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(String(buyer.milkSource).toLowerCase()))
       ? String(buyer.milkSource).toLowerCase()
@@ -419,6 +486,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           pricePerLiter: String(rate || ''),
         },
       ],
+      deliveryShift: useShift ? deliveryShift : null,
     });
   };
 
@@ -443,13 +511,23 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           return;
         }
       }
+      const shiftOpt =
+        customModal.deliveryShift === 'morning' || customModal.deliveryShift === 'evening'
+          ? { deliveryShift: customModal.deliveryShift }
+          : undefined;
+      if (lines.length > 1 && shiftOpt) {
+        Alert.alert('Error', 'Use a single milk line for a morning/evening custom sale, or save each line without shift.');
+        setActionLoading(null);
+        return;
+      }
       for (const line of lines) {
         await milkService.quickSale(
           customModal.mobile,
           parseFloat(line.quantity),
           parseFloat(line.pricePerLiter),
           line.milkSource,
-          saleYmd
+          saleYmd,
+          shiftOpt
         );
       }
       setCustomModal(null);
@@ -477,11 +555,16 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       paymentType: t.paymentType || 'credit',
       amountReceived: t.amountReceived != null ? String(t.amountReceived) : '',
       notes: t.notes || '',
+      deliveryShift: t.deliveryShift === 'evening' ? 'evening' : t.deliveryShift === 'morning' ? 'morning' : null,
     });
   };
 
-  const openEdit = (buyer, ds, specificTx = null) => {
-    const txs = salesForBuyerDate(buyer.mobile, ds);
+  const openEdit = (buyer, ds, specificTx = null, shiftFilter = null) => {
+    const txs = specificTx
+      ? [specificTx]
+      : shiftFilter
+        ? salesForBuyerDateShift(buyer.mobile, ds, shiftFilter)
+        : salesForBuyerDate(buyer.mobile, ds);
     if (txs.length === 0) return;
     if (specificTx) {
       openEditModalForTx(buyer, ds, specificTx);
@@ -522,6 +605,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           editModal.paymentType === 'cash' && editModal.amountReceived
             ? parseFloat(editModal.amountReceived)
             : undefined,
+        deliveryShift: editModal.deliveryShift === 'morning' || editModal.deliveryShift === 'evening' ? editModal.deliveryShift : undefined,
       });
       setEditModal(null);
       await loadData(true);
@@ -532,8 +616,8 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
   };
 
-  const handleDeleteCell = (buyer, ds) => {
-    const txs = salesForBuyerDate(buyer.mobile, ds);
+  const handleDeleteCell = (buyer, ds, shiftFilter = null) => {
+    const txs = shiftFilter ? salesForBuyerDateShift(buyer.mobile, ds, shiftFilter) : salesForBuyerDate(buyer.mobile, ds);
     if (txs.length === 0) return;
     if (txs.length > 1) {
       setPickDeleteModal({ buyer, dateStr: ds, txs });
@@ -549,7 +633,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              setActionLoading(`del-${buyer.mobile}-${ds}`);
+              setActionLoading(`del-${buyer.mobile}-${ds}-${shiftFilter || 'all'}`);
               await Promise.all(txs.map((t) => milkService.deleteTransaction(t._id)));
               await loadData(true);
             } catch (e) {
@@ -646,6 +730,95 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     );
   };
 
+  const renderShiftCell = (b, shift) => {
+    const ok = haveDeliveryForCell(b, dateStr);
+    const txs = salesForBuyerDateShift(b.mobile, dateStr, shift);
+    const delivered = txs.length > 0;
+    const targetQ = shift === 'morning' ? Number(b.morningQuantity) || 0 : Number(b.eveningQuantity) || 0;
+    const qtySum = txs.reduce((s, t) => s + (Number(t.quantity) || 0), 0);
+    const bySource = txs.reduce((acc, t) => {
+      const key = String(t.milkSource || 'cow');
+      acc[key] = (acc[key] || 0) + (Number(t.quantity) || 0);
+      return acc;
+    }, {});
+    const sourceLine = delivered
+      ? Object.entries(bySource)
+          .filter(([, qv]) => qv > 0)
+          .map(([src, qv]) => {
+            const label = MILK_SOURCE_TYPES.find((s) => s.value === src)?.label || src;
+            return `${label} ${Number(qv).toFixed(1)}L`;
+          })
+          .join(' · ')
+      : '';
+
+    if (!ok) {
+      return (
+        <View style={[styles.cell, styles.cellOff, { minHeight: ROW_MIN_H }]}>
+          <Text style={styles.cellOffText}>—</Text>
+        </View>
+      );
+    }
+
+    if (!delivered) {
+      const busyHere = actionLoading === `${String(b.mobile).trim()}-${dateStr}-${shift}`;
+      return (
+        <View style={[styles.cell, { minHeight: ROW_MIN_H }]}>
+          {targetQ > 0 ? (
+            <Text style={styles.shiftTargetHint} numberOfLines={1}>
+              → {targetQ.toFixed(1)}L
+            </Text>
+          ) : (
+            <Text style={styles.shiftTargetHintMuted} numberOfLines={1}>
+              —
+            </Text>
+          )}
+          <TouchableOpacity
+            style={[styles.miniBtn, styles.miniDeliver]}
+            onPress={() => handleDeliveredShift(b, dateStr, shift)}
+            disabled={busyHere || actionLoading !== null}
+          >
+            <Text style={styles.miniBtnTextDelivered} numberOfLines={2}>
+              {busyHere ? '...' : 'Delivered'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.miniBtn, styles.miniCust]}
+            onPress={() => openCustom(b, dateStr, shift)}
+            disabled={actionLoading !== null}
+          >
+            <Text style={styles.miniBtnText} numberOfLines={1}>
+              Custom
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return (
+      <View style={[styles.cell, styles.cellDone, { minHeight: ROW_MIN_H }]}>
+        <Text style={styles.cellQty} numberOfLines={1}>
+          {qtySum.toFixed(1)}L
+        </Text>
+        {!!sourceLine && (
+          <Text style={styles.cellSub} numberOfLines={2}>
+            {sourceLine}
+          </Text>
+        )}
+        <View style={styles.cellActions}>
+          <TouchableOpacity style={styles.linkBtn} onPress={() => openCustom(b, dateStr, shift)} disabled={actionLoading !== null}>
+            <Text style={styles.linkAdd}>Add</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.linkBtn} onPress={() => openEdit(b, dateStr, null, shift)} disabled={actionLoading !== null}>
+            <Text style={styles.linkEdit}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.linkBtn} onPress={() => handleDeleteCell(b, dateStr, shift)} disabled={actionLoading !== null}>
+            <Text style={styles.linkDel}>Del</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <HeaderWithMenu
@@ -689,9 +862,16 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
             <View style={[styles.cornerCell, { width: NAME_COL_W, minHeight: HEADER_ROW_MIN_H }]}>
               <Text style={styles.cornerText}>Buyer</Text>
             </View>
-            <View style={[styles.headDelivery, { minHeight: HEADER_ROW_MIN_H }]}>
-              <Text style={styles.headDeliveryText}>Delivery</Text>
-            </View>
+            {hasAnyShiftBuyer ? (
+              <View style={[styles.headDeliverySplit, { minHeight: HEADER_ROW_MIN_H }]}>
+                <Text style={styles.headSplitCol}>Morning</Text>
+                <Text style={styles.headSplitCol}>Evening</Text>
+              </View>
+            ) : (
+              <View style={[styles.headDelivery, { minHeight: HEADER_ROW_MIN_H }]}>
+                <Text style={styles.headDeliveryText}>Delivery</Text>
+              </View>
+            )}
           </View>
           {buyersSorted.map((b) => (
             <View key={b.mobile} style={styles.tableRow}>
@@ -757,7 +937,16 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                   </>
                 ) : null}
               </View>
-              <View style={styles.cellWrap}>{renderCell(b)}</View>
+              <View style={styles.cellWrap}>
+                {buyerUsesShiftColumns(b) ? (
+                  <View style={styles.shiftPair}>
+                    <View style={[styles.shiftCol, styles.shiftColLeft]}>{renderShiftCell(b, 'morning')}</View>
+                    <View style={styles.shiftCol}>{renderShiftCell(b, 'evening')}</View>
+                  </View>
+                ) : (
+                  renderCell(b)
+                )}
+              </View>
             </View>
           ))}
         </ScrollView>
@@ -1133,6 +1322,13 @@ const styles = StyleSheet.create({
   cornerText: { fontWeight: '700', fontSize: 12, color: '#2e7d32' },
   headDelivery: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 8 },
   headDeliveryText: { fontSize: 13, fontWeight: '700', color: '#555' },
+  headDeliverySplit: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  headSplitCol: { flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '700', color: '#555', paddingVertical: 8 },
+  shiftPair: { flex: 1, flexDirection: 'row', alignItems: 'stretch' },
+  shiftCol: { flex: 1, minWidth: 0 },
+  shiftColLeft: { borderRightWidth: 1, borderRightColor: '#e0e0e0' },
+  shiftTargetHint: { fontSize: 10, color: '#5c6bc0', textAlign: 'center', marginBottom: 2, fontWeight: '600' },
+  shiftTargetHintMuted: { fontSize: 10, color: '#ccc', textAlign: 'center', marginBottom: 2 },
   nameCell: {
     padding: 8,
     justifyContent: 'center',

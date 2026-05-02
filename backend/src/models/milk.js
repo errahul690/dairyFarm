@@ -117,6 +117,15 @@ const MilkTransactionSchema = new mongoose.Schema({
     enum: ['admin', 'buyer_app'],
     default: 'admin',
     required: false
+  },
+  /** Optional: morning vs evening delivery bucket for Quick Sale split buyers. */
+  deliveryShift: {
+    type: String,
+    enum: ['morning', 'evening'],
+    required: false,
+    default: undefined,
+    trim: true,
+    lowercase: true
   }
 }, {
   timestamps: true,
