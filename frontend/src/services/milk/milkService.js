@@ -24,6 +24,9 @@ export const milkService = {
     if (transaction.buyerId) payload.buyerId = typeof transaction.buyerId === 'string' ? transaction.buyerId : (transaction.buyerId._id || transaction.buyerId).toString();
     if (transaction.paymentType) payload.paymentType = transaction.paymentType;
     if (transaction.amountReceived != null) payload.amountReceived = transaction.amountReceived;
+    if (transaction.deliveryShift === 'morning' || transaction.deliveryShift === 'evening') {
+      payload.deliveryShift = transaction.deliveryShift;
+    }
     const response = await apiClient.post('/milk/sale', payload);
     
     // Convert date string back to Date object
@@ -107,10 +110,10 @@ export const milkService = {
     
     if (transaction.paymentType) payload.paymentType = transaction.paymentType;
     if (transaction.amountReceived != null) payload.amountReceived = transaction.amountReceived;
-    if (transaction.type === 'sale' && (transaction.deliveryShift === 'morning' || transaction.deliveryShift === 'evening')) {
+    if (transaction.deliveryShift === 'morning' || transaction.deliveryShift === 'evening') {
       payload.deliveryShift = transaction.deliveryShift;
     }
-
+    
     console.log('[milkService] Update payload:', payload);
     
     const response = await apiClient.patch(`/milk/${id}`, payload);
@@ -133,17 +136,14 @@ export const milkService = {
    * @param {number} [pricePerLiter] - optional; if omitted uses buyer's set rate
    * @param {string} [milkSource] - optional; cow/buffalo/sheep/goat; if omitted uses buyer's default
    * @param {string|Date} [saleDate] - optional YYYY-MM-DD (IST calendar day) for the sale
-   * @param {{ deliveryShift?: 'morning'|'evening' }} [options]
+   * @param {'morning'|'evening'|null} [deliveryShift] - morning or evening delivery round
    */
-  quickSale: async (buyerMobile, quantity = null, pricePerLiter = null, milkSource = null, saleDate = null, options = null) => {
+  quickSale: async (buyerMobile, quantity = null, pricePerLiter = null, milkSource = null, saleDate = null, deliveryShift = null) => {
     const payload = { buyerMobile: String(buyerMobile).trim() };
     if (quantity != null && quantity > 0) payload.quantity = quantity;
     if (pricePerLiter != null && pricePerLiter >= 0) payload.pricePerLiter = pricePerLiter;
     if (milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(milkSource)) payload.milkSource = milkSource;
-    const opts = options && typeof options === 'object' ? options : {};
-    if (opts.deliveryShift === 'morning' || opts.deliveryShift === 'evening') {
-      payload.deliveryShift = opts.deliveryShift;
-    }
+    if (deliveryShift === 'morning' || deliveryShift === 'evening') payload.deliveryShift = deliveryShift;
     if (saleDate != null && saleDate !== '') {
       const ymd =
         saleDate instanceof Date

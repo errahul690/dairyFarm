@@ -70,6 +70,17 @@ function getStartOfDayISTFromString(dateStr) {
   return new Date(utcMidnight - IST_OFFSET_MS);
 }
 
+/** Legacy rows without deliveryShift count as morning. */
+function saleTxShift(t) {
+  return t && t.deliveryShift === 'evening' ? 'evening' : 'morning';
+}
+
+function buyerAllowsShift(buyer, shift) {
+  const pref = buyer?.deliveryShift || 'both';
+  if (pref === 'both') return true;
+  return pref === shift;
+}
+
 function isDeliveryDay(buyer, dateStartIST) {
   const deliveryDays = buyer.deliveryDays;
   if (deliveryDays && Array.isArray(deliveryDays) && deliveryDays.length > 0) {
@@ -99,20 +110,6 @@ function formatLongDateLine(ymd) {
 
 function padMondayFirst(jsDaySun0) {
   return jsDaySun0 === 0 ? 6 : jsDaySun0 - 1;
-}
-
-/** Legacy sales without deliveryShift count as morning for display. */
-function txDeliveryShift(t) {
-  if (t && t.deliveryShift === 'evening') return 'evening';
-  return 'morning';
-}
-
-function buyerUsesShiftColumns(buyer) {
-  const hasItems = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0;
-  if (hasItems) return false;
-  const mq = Number(buyer.morningQuantity) || 0;
-  const eq = Number(buyer.eveningQuantity) || 0;
-  return mq > 0 || eq > 0;
 }
 
 function buildMonthCells(year, month0) {
@@ -343,24 +340,18 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     [overridesByDate]
   );
 
-  const salesForBuyerDate = useCallback(
-    (mobile, dateStr) => {
+  const salesForBuyerDateShift = useCallback(
+    (mobile, dateStr, shift) => {
       const m = String(mobile).trim();
       return transactions.filter(
         (t) =>
           t.type === 'sale' &&
           String(t.buyerPhone || '').trim() === m &&
-          getYmdInIST(t.date) === dateStr
+          getYmdInIST(t.date) === dateStr &&
+          saleTxShift(t) === shift
       );
     },
     [transactions]
-  );
-
-  const salesForBuyerDateShift = useCallback(
-    (mobile, dateStr, shift) => {
-      return salesForBuyerDate(mobile, dateStr).filter((t) => txDeliveryShift(t) === shift);
-    },
-    [salesForBuyerDate]
   );
 
   const buyersSorted = useMemo(() => {
@@ -369,54 +360,15 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'en'));
   }, [buyers]);
 
-  const hasAnyShiftBuyer = useMemo(
-    () => buyersSorted.some((b) => buyerUsesShiftColumns(b)),
-    [buyersSorted]
-  );
-
   const dateStr = selectedDateYmd;
   const isViewingToday = selectedDateYmd === getTodayYmdIST();
 
-  const handleDeliveredShift = async (buyer, ds, shift) => {
+  const handleDelivered = async (buyer, ds, shift) => {
     if (!buyer.mobile) return;
+    if (!buyerAllowsShift(buyer, shift)) return;
     const txs = salesForBuyerDateShift(buyer.mobile, ds, shift);
     if (txs.length > 0) {
-      Alert.alert('Already delivered', `This ${shift === 'morning' ? 'morning' : 'evening'} delivery is already recorded.`);
-      return;
-    }
-    const mq = Number(buyer.morningQuantity) || 0;
-    const eq = Number(buyer.eveningQuantity) || 0;
-    const q = shift === 'morning' ? mq : eq;
-    const rate = Number(buyer.rate) || 0;
-    const src =
-      buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(String(buyer.milkSource).toLowerCase())
-        ? String(buyer.milkSource).toLowerCase()
-        : 'cow';
-    if (!(q > 0 && rate > 0)) {
-      Alert.alert('Set shift & rate', 'Set morning/evening litres and ₹/L rate for this buyer first.');
-      return;
-    }
-    const saleYmd = String(ds || '').trim() || selectedDateYmd;
-    try {
-      setActionLoading(`${buyer.mobile}-${ds}-${shift}`);
-      await milkService.quickSale(buyer.mobile, q, rate, src, saleYmd, { deliveryShift: shift });
-      await loadData(true);
-    } catch (e) {
-      Alert.alert('Error', e?.message || 'Quick sale failed.');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleDelivered = async (buyer, ds) => {
-    if (!buyer.mobile) return;
-    if (buyerUsesShiftColumns(buyer)) {
-      Alert.alert('Morning / Evening', 'Use the Morning or Evening column to record each shift.');
-      return;
-    }
-    const txs = salesForBuyerDate(buyer.mobile, ds);
-    if (txs.length > 0) {
-      Alert.alert('Already delivered', 'This day already has sale(s).');
+      Alert.alert('Already delivered', 'This shift already has sale(s) for this day.');
       return;
     }
     const hasDeliveryItems = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0;
@@ -430,8 +382,8 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
     const saleYmd = String(ds || '').trim() || selectedDateYmd;
     try {
-      setActionLoading(`${buyer.mobile}-${ds}`);
-      await milkService.quickSale(buyer.mobile, null, null, null, saleYmd);
+      setActionLoading(`${buyer.mobile}-${ds}-${shift}`);
+      await milkService.quickSale(buyer.mobile, null, null, null, saleYmd, shift);
       await loadData(true);
     } catch (e) {
       Alert.alert('Error', e?.message || 'Quick sale failed.');
@@ -440,8 +392,9 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
   };
 
-  const openCustom = (buyer, ds, deliveryShift = null) => {
+  const openCustom = (buyer, ds, shift) => {
     if (!buyer.mobile) return;
+    if (!buyerAllowsShift(buyer, shift)) return;
     const hasDeliveryItems = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0;
     if (hasDeliveryItems) {
       const lines = buyer.deliveryItems.map((it) => {
@@ -458,18 +411,13 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
         name: buyer.name,
         mobile: String(buyer.mobile).trim(),
         dateStr: ds,
+        deliveryShift: shift,
         multiLine: true,
         lines,
-        deliveryShift: null,
       });
       return;
     }
-    const mq = Number(buyer.morningQuantity) || 0;
-    const eq = Number(buyer.eveningQuantity) || 0;
-    const useShift = (mq > 0 || eq > 0) && (deliveryShift === 'morning' || deliveryShift === 'evening');
-    const dailyQuantity = useShift
-      ? (deliveryShift === 'morning' ? mq : eq)
-      : Number(buyer.quantity) || 0;
+    const dailyQuantity = Number(buyer.quantity) || 0;
     const rate = Number(buyer.rate) || 0;
     const src = (buyer.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(String(buyer.milkSource).toLowerCase()))
       ? String(buyer.milkSource).toLowerCase()
@@ -478,6 +426,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       name: buyer.name,
       mobile: String(buyer.mobile).trim(),
       dateStr: ds,
+      deliveryShift: shift,
       multiLine: true,
       lines: [
         {
@@ -486,7 +435,6 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           pricePerLiter: String(rate || ''),
         },
       ],
-      deliveryShift: useShift ? deliveryShift : null,
     });
   };
 
@@ -494,7 +442,8 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     if (!customModal) return;
     const saleYmd = String(customModal.dateStr || '').trim() || selectedDateYmd;
     try {
-      setActionLoading(`${customModal.mobile}-custom`);
+      const shift = customModal.deliveryShift === 'evening' ? 'evening' : 'morning';
+      setActionLoading(`${customModal.mobile}-custom-${shift}`);
       const lines = Array.isArray(customModal.lines) ? customModal.lines : [];
       if (lines.length === 0) {
         Alert.alert('Error', 'Add at least one milk line.');
@@ -511,15 +460,6 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           return;
         }
       }
-      const shiftOpt =
-        customModal.deliveryShift === 'morning' || customModal.deliveryShift === 'evening'
-          ? { deliveryShift: customModal.deliveryShift }
-          : undefined;
-      if (lines.length > 1 && shiftOpt) {
-        Alert.alert('Error', 'Use a single milk line for a morning/evening custom sale, or save each line without shift.');
-        setActionLoading(null);
-        return;
-      }
       for (const line of lines) {
         await milkService.quickSale(
           customModal.mobile,
@@ -527,7 +467,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           parseFloat(line.pricePerLiter),
           line.milkSource,
           saleYmd,
-          shiftOpt
+          shift
         );
       }
       setCustomModal(null);
@@ -548,6 +488,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       quantity: String(t.quantity ?? ''),
       pricePerLiter: String(t.pricePerLiter ?? ''),
       milkSource: t.milkSource || 'cow',
+      deliveryShift: saleTxShift(t),
       buyer: t.buyer,
       buyerPhone: t.buyerPhone,
       buyerId: t.buyerId,
@@ -555,23 +496,18 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       paymentType: t.paymentType || 'credit',
       amountReceived: t.amountReceived != null ? String(t.amountReceived) : '',
       notes: t.notes || '',
-      deliveryShift: t.deliveryShift === 'evening' ? 'evening' : t.deliveryShift === 'morning' ? 'morning' : null,
     });
   };
 
-  const openEdit = (buyer, ds, specificTx = null, shiftFilter = null) => {
-    const txs = specificTx
-      ? [specificTx]
-      : shiftFilter
-        ? salesForBuyerDateShift(buyer.mobile, ds, shiftFilter)
-        : salesForBuyerDate(buyer.mobile, ds);
+  const openEdit = (buyer, ds, specificTx = null, shift = 'morning') => {
+    const txs = salesForBuyerDateShift(buyer.mobile, ds, shift);
     if (txs.length === 0) return;
     if (specificTx) {
       openEditModalForTx(buyer, ds, specificTx);
       return;
     }
     if (txs.length > 1) {
-      setPickTxModal({ buyer, dateStr: ds, txs });
+      setPickTxModal({ buyer, dateStr: ds, txs, shift });
       return;
     }
     openEditModalForTx(buyer, ds, txs[0]);
@@ -600,12 +536,12 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
         buyerId: editModal.buyerId,
         notes: editModal.notes || undefined,
         milkSource: editModal.milkSource,
+        deliveryShift: editModal.deliveryShift === 'evening' ? 'evening' : 'morning',
         paymentType: editModal.paymentType || 'credit',
         amountReceived:
           editModal.paymentType === 'cash' && editModal.amountReceived
             ? parseFloat(editModal.amountReceived)
             : undefined,
-        deliveryShift: editModal.deliveryShift === 'morning' || editModal.deliveryShift === 'evening' ? editModal.deliveryShift : undefined,
       });
       setEditModal(null);
       await loadData(true);
@@ -616,16 +552,17 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
   };
 
-  const handleDeleteCell = (buyer, ds, shiftFilter = null) => {
-    const txs = shiftFilter ? salesForBuyerDateShift(buyer.mobile, ds, shiftFilter) : salesForBuyerDate(buyer.mobile, ds);
+  const handleDeleteCell = (buyer, ds, shift) => {
+    if (!buyerAllowsShift(buyer, shift)) return;
+    const txs = salesForBuyerDateShift(buyer.mobile, ds, shift);
     if (txs.length === 0) return;
     if (txs.length > 1) {
-      setPickDeleteModal({ buyer, dateStr: ds, txs });
+      setPickDeleteModal({ buyer, dateStr: ds, txs, shift });
       return;
     }
     Alert.alert(
       'Delete sales',
-      `Delete ${txs.length} sale record(s) for ${buyer.name} on ${ds}?`,
+      `Delete ${txs.length} sale record(s) for ${buyer.name} on ${ds} (${shift === 'evening' ? 'Evening' : 'Morning'})?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -633,7 +570,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              setActionLoading(`del-${buyer.mobile}-${ds}-${shiftFilter || 'all'}`);
+              setActionLoading(`del-${buyer.mobile}-${ds}-${shift}`);
               await Promise.all(txs.map((t) => milkService.deleteTransaction(t._id)));
               await loadData(true);
             } catch (e) {
@@ -651,9 +588,16 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     setSelectedDateYmd((prev) => addDaysYmd(prev, delta));
   };
 
-  const renderCell = (b) => {
+  const renderShiftCell = (b, shift) => {
+    if (!buyerAllowsShift(b, shift)) {
+      return (
+        <View style={[styles.cell, styles.cellShiftBlocked, { minHeight: ROW_MIN_H }]}>
+          <Text style={styles.cellOffText}>—</Text>
+        </View>
+      );
+    }
     const ok = haveDeliveryForCell(b, dateStr);
-    const txs = salesForBuyerDate(b.mobile, dateStr);
+    const txs = salesForBuyerDateShift(b.mobile, dateStr, shift);
     const delivered = txs.length > 0;
     const qtySum = txs.reduce((s, t) => s + (Number(t.quantity) || 0), 0);
     const bySource = txs.reduce((acc, t) => {
@@ -680,101 +624,12 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
 
     if (!delivered) {
-      const busyHere = actionLoading === `${String(b.mobile).trim()}-${dateStr}`;
-      return (
-        <View style={[styles.cell, { minHeight: ROW_MIN_H }]}>
-          <TouchableOpacity
-            style={[styles.miniBtn, styles.miniDeliver]}
-            onPress={() => handleDelivered(b, dateStr)}
-            disabled={busyHere || actionLoading !== null}
-          >
-            <Text style={styles.miniBtnTextDelivered} numberOfLines={2}>
-              {busyHere ? '...' : 'Delivered'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.miniBtn, styles.miniCust]}
-            onPress={() => openCustom(b, dateStr)}
-            disabled={actionLoading !== null}
-          >
-            <Text style={styles.miniBtnText} numberOfLines={1}>
-              Custom
-            </Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-
-    return (
-      <View style={[styles.cell, styles.cellDone, { minHeight: ROW_MIN_H }]}>
-        <Text style={styles.cellQty} numberOfLines={1}>
-          {qtySum.toFixed(1)}L
-        </Text>
-        {!!sourceLine && (
-          <Text style={styles.cellSub} numberOfLines={2}>
-            {sourceLine}
-          </Text>
-        )}
-        <View style={styles.cellActions}>
-          <TouchableOpacity style={styles.linkBtn} onPress={() => openCustom(b, dateStr)} disabled={actionLoading !== null}>
-            <Text style={styles.linkAdd}>Add</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.linkBtn} onPress={() => openEdit(b, dateStr)} disabled={actionLoading !== null}>
-            <Text style={styles.linkEdit}>Edit</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.linkBtn} onPress={() => handleDeleteCell(b, dateStr)} disabled={actionLoading !== null}>
-            <Text style={styles.linkDel}>Del</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  const renderShiftCell = (b, shift) => {
-    const ok = haveDeliveryForCell(b, dateStr);
-    const txs = salesForBuyerDateShift(b.mobile, dateStr, shift);
-    const delivered = txs.length > 0;
-    const targetQ = shift === 'morning' ? Number(b.morningQuantity) || 0 : Number(b.eveningQuantity) || 0;
-    const qtySum = txs.reduce((s, t) => s + (Number(t.quantity) || 0), 0);
-    const bySource = txs.reduce((acc, t) => {
-      const key = String(t.milkSource || 'cow');
-      acc[key] = (acc[key] || 0) + (Number(t.quantity) || 0);
-      return acc;
-    }, {});
-    const sourceLine = delivered
-      ? Object.entries(bySource)
-          .filter(([, qv]) => qv > 0)
-          .map(([src, qv]) => {
-            const label = MILK_SOURCE_TYPES.find((s) => s.value === src)?.label || src;
-            return `${label} ${Number(qv).toFixed(1)}L`;
-          })
-          .join(' · ')
-      : '';
-
-    if (!ok) {
-      return (
-        <View style={[styles.cell, styles.cellOff, { minHeight: ROW_MIN_H }]}>
-          <Text style={styles.cellOffText}>—</Text>
-        </View>
-      );
-    }
-
-    if (!delivered) {
       const busyHere = actionLoading === `${String(b.mobile).trim()}-${dateStr}-${shift}`;
       return (
         <View style={[styles.cell, { minHeight: ROW_MIN_H }]}>
-          {targetQ > 0 ? (
-            <Text style={styles.shiftTargetHint} numberOfLines={1}>
-              → {targetQ.toFixed(1)}L
-            </Text>
-          ) : (
-            <Text style={styles.shiftTargetHintMuted} numberOfLines={1}>
-              —
-            </Text>
-          )}
           <TouchableOpacity
             style={[styles.miniBtn, styles.miniDeliver]}
-            onPress={() => handleDeliveredShift(b, dateStr, shift)}
+            onPress={() => handleDelivered(b, dateStr, shift)}
             disabled={busyHere || actionLoading !== null}
           >
             <Text style={styles.miniBtnTextDelivered} numberOfLines={2}>
@@ -862,16 +717,15 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
             <View style={[styles.cornerCell, { width: NAME_COL_W, minHeight: HEADER_ROW_MIN_H }]}>
               <Text style={styles.cornerText}>Buyer</Text>
             </View>
-            {hasAnyShiftBuyer ? (
-              <View style={[styles.headDeliverySplit, { minHeight: HEADER_ROW_MIN_H }]}>
-                <Text style={styles.headSplitCol}>Morning</Text>
-                <Text style={styles.headSplitCol}>Evening</Text>
+            <View style={[styles.headDelivery, { minHeight: HEADER_ROW_MIN_H }]}>
+              <View style={styles.headShiftCol}>
+                <Text style={styles.headDeliveryText}>Morning</Text>
               </View>
-            ) : (
-              <View style={[styles.headDelivery, { minHeight: HEADER_ROW_MIN_H }]}>
-                <Text style={styles.headDeliveryText}>Delivery</Text>
+              <View style={styles.headShiftDivider} />
+              <View style={styles.headShiftCol}>
+                <Text style={styles.headDeliveryText}>Evening</Text>
               </View>
-            )}
+            </View>
           </View>
           {buyersSorted.map((b) => (
             <View key={b.mobile} style={styles.tableRow}>
@@ -937,15 +791,10 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                   </>
                 ) : null}
               </View>
-              <View style={styles.cellWrap}>
-                {buyerUsesShiftColumns(b) ? (
-                  <View style={styles.shiftPair}>
-                    <View style={[styles.shiftCol, styles.shiftColLeft]}>{renderShiftCell(b, 'morning')}</View>
-                    <View style={styles.shiftCol}>{renderShiftCell(b, 'evening')}</View>
-                  </View>
-                ) : (
-                  renderCell(b)
-                )}
+              <View style={styles.cellWrapRow}>
+                <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'morning')}</View>
+                <View style={styles.cellWrapDivider} />
+                <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'evening')}</View>
               </View>
             </View>
           ))}
@@ -966,7 +815,9 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
             {customModal && (
               <>
                 <Text style={styles.modalName}>{customModal.name}</Text>
-                <Text style={styles.modalDate}>Date: {customModal.dateStr}</Text>
+                <Text style={styles.modalDate}>
+                  Date: {customModal.dateStr} · Shift: {customModal.deliveryShift === 'evening' ? 'Evening' : 'Morning'}
+                </Text>
                 {customModal.multiLine && Array.isArray(customModal.lines) ? (
                   <ScrollView style={styles.customLinesScroll} keyboardShouldPersistTaps="handled">
                     <Text style={styles.modalHint}>One row per milk type (same as buyer delivery). Adjust qty/rate if needed.</Text>
@@ -1102,7 +953,9 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
             {pickTxModal && (
               <>
                 <Text style={styles.modalName}>{pickTxModal.buyer.name}</Text>
-                <Text style={styles.modalDate}>{pickTxModal.dateStr}</Text>
+                <Text style={styles.modalDate}>
+                  {pickTxModal.dateStr} · {pickTxModal.shift === 'evening' ? 'Evening' : 'Morning'}
+                </Text>
                 <ScrollView style={styles.pickTxScroll}>
                   {pickTxModal.txs.map((tx) => (
                     <TouchableOpacity
@@ -1136,7 +989,9 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
             {pickDeleteModal && (
               <>
                 <Text style={styles.modalName}>{pickDeleteModal.buyer.name}</Text>
-                <Text style={styles.modalDate}>{pickDeleteModal.dateStr}</Text>
+                <Text style={styles.modalDate}>
+                  {pickDeleteModal.dateStr} · {pickDeleteModal.shift === 'evening' ? 'Evening' : 'Morning'}
+                </Text>
                 <ScrollView style={styles.pickTxScroll}>
                   {pickDeleteModal.txs.map((tx) => (
                     <TouchableOpacity
@@ -1225,6 +1080,24 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
               <>
                 <Text style={styles.modalName}>{editModal.buyerName}</Text>
                 <Text style={styles.modalDate}>{editModal.dateStr}</Text>
+                <Text style={styles.modalLabel}>Shift</Text>
+                <View style={styles.milkSourceRow}>
+                  {[
+                    { id: 'morning', label: 'Morning' },
+                    { id: 'evening', label: 'Evening' },
+                  ].map((opt) => {
+                    const isActive = (editModal.deliveryShift || 'morning') === opt.id;
+                    return (
+                      <TouchableOpacity
+                        key={opt.id}
+                        style={[styles.milkSourceBtn, isActive && styles.milkSourceBtnActive]}
+                        onPress={() => setEditModal((m) => (m ? { ...m, deliveryShift: opt.id } : m))}
+                      >
+                        <Text style={[styles.milkSourceBtnText, isActive && styles.milkSourceBtnTextActive]}>{opt.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
                 <Text style={styles.modalLabel}>Milk type</Text>
                 <View style={styles.milkSourceRow}>
                   {MILK_SOURCE_TYPES.map((src) => {
@@ -1320,15 +1193,10 @@ const styles = StyleSheet.create({
     borderRightColor: '#c8e6c9',
   },
   cornerText: { fontWeight: '700', fontSize: 12, color: '#2e7d32' },
-  headDelivery: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 8 },
-  headDeliveryText: { fontSize: 13, fontWeight: '700', color: '#555' },
-  headDeliverySplit: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  headSplitCol: { flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '700', color: '#555', paddingVertical: 8 },
-  shiftPair: { flex: 1, flexDirection: 'row', alignItems: 'stretch' },
-  shiftCol: { flex: 1, minWidth: 0 },
-  shiftColLeft: { borderRightWidth: 1, borderRightColor: '#e0e0e0' },
-  shiftTargetHint: { fontSize: 10, color: '#5c6bc0', textAlign: 'center', marginBottom: 2, fontWeight: '600' },
-  shiftTargetHintMuted: { fontSize: 10, color: '#ccc', textAlign: 'center', marginBottom: 2 },
+  headDelivery: { flex: 1, flexDirection: 'row', alignItems: 'stretch', paddingVertical: 4 },
+  headShiftCol: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 4 },
+  headShiftDivider: { width: 1, backgroundColor: '#e0e0e0' },
+  headDeliveryText: { fontSize: 12, fontWeight: '700', color: '#555', textAlign: 'center' },
   nameCell: {
     padding: 8,
     justifyContent: 'center',
@@ -1378,6 +1246,10 @@ const styles = StyleSheet.create({
   pickTxMain: { fontSize: 14, fontWeight: '600', color: '#333' },
   pickTxSub: { fontSize: 12, color: '#666', marginTop: 4 },
   cellWrap: { flex: 1, minWidth: 0 },
+  cellWrapRow: { flex: 1, flexDirection: 'row', alignItems: 'stretch', minWidth: 0 },
+  cellWrapHalf: { flex: 1, minWidth: 0 },
+  cellWrapDivider: { width: 1, backgroundColor: '#eee' },
+  cellShiftBlocked: { backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center' },
   cell: {
     padding: 6,
     justifyContent: 'center',

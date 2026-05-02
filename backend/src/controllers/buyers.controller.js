@@ -42,8 +42,7 @@ const listBuyers = async (req, res) => {
           billingMode: buyer.billingMode,
           billingDayOfMonth: buyer.billingDayOfMonth,
           lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
-          morningQuantity: buyer.morningQuantity,
-          eveningQuantity: buyer.eveningQuantity,
+          deliveryShift: buyer.deliveryShift || "both",
           createdAt: buyer.createdAt,
           updatedAt: buyer.updatedAt,
         };
@@ -85,8 +84,7 @@ const getMyBuyerProfile = async (req, res) => {
       billingMode: buyer.billingMode,
       billingDayOfMonth: buyer.billingDayOfMonth,
       lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
-      morningQuantity: buyer.morningQuantity,
-      eveningQuantity: buyer.eveningQuantity,
+      deliveryShift: buyer.deliveryShift || "both",
     });
   } catch (error) {
     console.error("[buyers] getMyBuyerProfile:", error);
@@ -191,7 +189,7 @@ const updateMyBuyerProfile = async (req, res) => {
     const buyer = await findBuyerByUserId(userId);
     if (!buyer) return res.status(404).json({ error: "Buyer profile not found" });
     const updates = req.body || {};
-    const allowed = ["quantity", "deliveryItems", "morningQuantity", "eveningQuantity"];
+    const allowed = ["quantity", "deliveryItems"];
     const filtered = {};
     for (const key of allowed) {
       if (updates[key] !== undefined) filtered[key] = updates[key];
@@ -200,16 +198,6 @@ const updateMyBuyerProfile = async (req, res) => {
       const q = Number(filtered.quantity);
       if (!(q >= 0)) return res.status(400).json({ error: "Quantity must be 0 or more" });
       filtered.quantity = q;
-    }
-    if (filtered.morningQuantity != null) {
-      const q = Number(filtered.morningQuantity);
-      if (!(q >= 0)) return res.status(400).json({ error: "morningQuantity must be 0 or more" });
-      filtered.morningQuantity = q;
-    }
-    if (filtered.eveningQuantity != null) {
-      const q = Number(filtered.eveningQuantity);
-      if (!(q >= 0)) return res.status(400).json({ error: "eveningQuantity must be 0 or more" });
-      filtered.eveningQuantity = q;
     }
     if (Array.isArray(filtered.deliveryItems)) {
       filtered.deliveryItems = filtered.deliveryItems
@@ -242,8 +230,6 @@ const updateMyBuyerProfile = async (req, res) => {
       deliveryDays: updated.deliveryDays,
       deliveryCycleDays: updated.deliveryCycleDays,
       deliveryCycleStartDate: updated.deliveryCycleStartDate,
-      morningQuantity: updated.morningQuantity,
-      eveningQuantity: updated.eveningQuantity,
       updatedAt: updated.updatedAt,
     });
   } catch (error) {
@@ -260,10 +246,17 @@ const updateBuyer = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body || {};
-    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryItems", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate", "billingMode", "billingDayOfMonth", "morningQuantity", "eveningQuantity"];
+    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryItems", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate", "billingMode", "billingDayOfMonth", "deliveryShift"];
     const filtered = {};
     for (const key of allowed) {
       if (updates[key] !== undefined) filtered[key] = updates[key];
+    }
+    if (filtered.deliveryShift !== undefined) {
+      const ds = String(filtered.deliveryShift).trim();
+      if (!["morning", "evening", "both"].includes(ds)) {
+        return res.status(400).json({ error: "deliveryShift must be morning, evening, or both" });
+      }
+      filtered.deliveryShift = ds;
     }
     if (Array.isArray(filtered.deliveryItems)) {
       filtered.deliveryItems = filtered.deliveryItems
@@ -278,16 +271,6 @@ const updateBuyer = async (req, res) => {
           return { milkSource: src, quantity: q, rate: r };
         })
         .filter(Boolean);
-    }
-    if (filtered.morningQuantity != null) {
-      const q = Number(filtered.morningQuantity);
-      if (!(q >= 0)) return res.status(400).json({ error: "morningQuantity must be 0 or more" });
-      filtered.morningQuantity = q;
-    }
-    if (filtered.eveningQuantity != null) {
-      const q = Number(filtered.eveningQuantity);
-      if (!(q >= 0)) return res.status(400).json({ error: "eveningQuantity must be 0 or more" });
-      filtered.eveningQuantity = q;
     }
     if (filtered.deliveryCycleStartDate != null && typeof filtered.deliveryCycleStartDate === "string") {
       filtered.deliveryCycleStartDate = new Date(filtered.deliveryCycleStartDate);
@@ -352,8 +335,7 @@ const updateBuyer = async (req, res) => {
       billingMode: updated.billingMode,
       billingDayOfMonth: updated.billingDayOfMonth,
       lastBillingPeriodEnd: updated.lastBillingPeriodEnd,
-      morningQuantity: updated.morningQuantity,
-      eveningQuantity: updated.eveningQuantity,
+      deliveryShift: updated.deliveryShift || "both",
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
     });

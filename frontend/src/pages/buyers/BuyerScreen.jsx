@@ -48,8 +48,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     deliveryCycleStartDate: '',
     billingMode: 'none',
     billingDayOfMonth: '',
-    morningQuantity: '',
-    eveningQuantity: '',
+    deliveryShift: 'both',
   });
   const [showAddMilkModal, setShowAddMilkModal] = useState(false);
   const [addMilkBuyer, setAddMilkBuyer] = useState(null);
@@ -464,6 +463,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
           billingDayOfMonth: buyer.billingDayOfMonth,
           lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
           pendingBalanceFromApi: buyer.pendingBalance != null ? Number(buyer.pendingBalance) : null,
+          deliveryShift: buyer.deliveryShift || 'both',
         });
       }
     });
@@ -574,9 +574,12 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
         if (buyer.billingDayOfMonth != null) return 'custom';
         return 'none';
       })(),
-      billingDayOfMonth: buyer.billingDayOfMonth != null ? String(buyer.billingDayOfMonth) : '',
-      morningQuantity: buyer.morningQuantity != null && buyer.morningQuantity !== '' ? String(buyer.morningQuantity) : '',
-      eveningQuantity: buyer.eveningQuantity != null && buyer.eveningQuantity !== '' ? String(buyer.eveningQuantity) : '',
+          billingDayOfMonth: buyer.billingDayOfMonth != null ? String(buyer.billingDayOfMonth) : '',
+      deliveryShift: (() => {
+        const s = buyer.deliveryShift;
+        if (s === 'morning' || s === 'evening' || s === 'both') return s;
+        return 'both';
+      })(),
     });
     setShowEditForm(true);
   };
@@ -602,6 +605,19 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       Alert.alert('Error', 'Enter start date for delivery cycle');
       return;
     }
+    const builtItems = (formData.deliveryItems || [])
+      .map((it) => {
+        const q = parseFloat(it.quantity);
+        const r = parseFloat(it.rate);
+        if (!(q > 0 && r >= 0)) return null;
+        const src = (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow';
+        return { milkSource: src, quantity: q, rate: r };
+      })
+      .filter(Boolean);
+    if (builtItems.length === 0) {
+      Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
+      return;
+    }
     if (formData.billingMode === 'custom') {
       const billingDayRaw = String(formData.billingDayOfMonth || '').trim();
       if (!billingDayRaw) {
@@ -614,16 +630,24 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
         return;
       }
     }
-
-    const mqRaw = String(formData.morningQuantity || '').trim();
-    const eqRaw = String(formData.eveningQuantity || '').trim();
-    const mqParsed = mqRaw === '' ? NaN : parseFloat(mqRaw);
-    const eqParsed = eqRaw === '' ? NaN : parseFloat(eqRaw);
-    const mqN = Number.isFinite(mqParsed) && mqParsed >= 0 ? mqParsed : 0;
-    const eqN = Number.isFinite(eqParsed) && eqParsed >= 0 ? eqParsed : 0;
-    const shiftSplitActive = mqN > 0 || eqN > 0;
-
-    const applyScheduleBillingToPayload = (deliveryPayload) => {
+    try {
+      setLoading(true);
+      const first = builtItems[0];
+      const fixedPrice = first.rate;
+      const dailyQuantity = builtItems.reduce((s, it) => s + it.quantity, 0);
+      await userService.updateUser(editingBuyer.userId, {
+        name: formData.name.trim(),
+        email: formData.email?.trim() || '',
+        mobile: formData.mobile.trim(),
+        milkFixedPrice: fixedPrice,
+        dailyMilkQuantity: dailyQuantity,
+      });
+      const deliveryPayload = {
+        deliveryItems: builtItems,
+        quantity: first.quantity,
+        rate: first.rate,
+        milkSource: first.milkSource,
+      };
       if (formData.deliveryScheduleType === 'daily') {
         deliveryPayload.deliveryDays = [];
         deliveryPayload.deliveryCycleDays = null;
@@ -653,91 +677,9 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
         deliveryPayload.billingMode = 'custom';
         deliveryPayload.billingDayOfMonth = parseInt(String(formData.billingDayOfMonth || '').trim(), 10);
       }
-    };
-
-    try {
-      setLoading(true);
-
-      if (shiftSplitActive) {
-        const linesWithQty = (formData.deliveryItems || []).filter((it) => parseFloat(String(it.quantity || '').trim()) > 0);
-        if (linesWithQty.length > 1) {
-          Alert.alert(
-            'Error',
-            'Morning/evening split uses one milk type only. Remove extra milk lines or clear morning/evening litres.',
-          );
-          return;
-        }
-        const line0 = linesWithQty[0] || (formData.deliveryItems || [])[0];
-        if (!line0) {
-          Alert.alert('Error', 'Select milk type and enter rate (₹/L)');
-          return;
-        }
-        const r = parseFloat(String(line0.rate || '').trim());
-        if (!Number.isFinite(r) || r < 0) {
-          Alert.alert('Error', 'Enter valid rate (₹/L)');
-          return;
-        }
-        const src = (line0.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(line0.milkSource)) ? line0.milkSource : 'cow';
-        const fixedPrice = r;
-        const dailyQuantity = mqN + eqN;
-        await userService.updateUser(editingBuyer.userId, {
-          name: formData.name.trim(),
-          email: formData.email?.trim() || '',
-          mobile: formData.mobile.trim(),
-          milkFixedPrice: fixedPrice,
-          dailyMilkQuantity: dailyQuantity,
-        });
-        const deliveryPayload = {
-          deliveryItems: [],
-          morningQuantity: mqN,
-          eveningQuantity: eqN,
-          quantity: dailyQuantity,
-          rate: r,
-          milkSource: src,
-        };
-        applyScheduleBillingToPayload(deliveryPayload);
-        if (editingBuyer._id) {
-          await buyerService.updateBuyer(editingBuyer._id, deliveryPayload);
-        }
-        setShowEditForm(false);
-        setEditingBuyer(null);
-        await loadData(true);
-        Alert.alert('Success', 'Buyer updated successfully!');
-        return;
+      if (formData.deliveryShift === 'morning' || formData.deliveryShift === 'evening' || formData.deliveryShift === 'both') {
+        deliveryPayload.deliveryShift = formData.deliveryShift;
       }
-
-      const builtItems = (formData.deliveryItems || [])
-        .map((it) => {
-          const q = parseFloat(it.quantity);
-          const r = parseFloat(it.rate);
-          if (!(q > 0 && r >= 0)) return null;
-          const src = (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow';
-          return { milkSource: src, quantity: q, rate: r };
-        })
-        .filter(Boolean);
-      if (builtItems.length === 0) {
-        Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
-        return;
-      }
-      const first = builtItems[0];
-      const fixedPrice = first.rate;
-      const dailyQuantity = builtItems.reduce((s, it) => s + it.quantity, 0);
-      await userService.updateUser(editingBuyer.userId, {
-        name: formData.name.trim(),
-        email: formData.email?.trim() || '',
-        mobile: formData.mobile.trim(),
-        milkFixedPrice: fixedPrice,
-        dailyMilkQuantity: dailyQuantity,
-      });
-      const deliveryPayload = {
-        deliveryItems: builtItems,
-        quantity: first.quantity,
-        rate: first.rate,
-        milkSource: first.milkSource,
-        morningQuantity: 0,
-        eveningQuantity: 0,
-      };
-      applyScheduleBillingToPayload(deliveryPayload);
       if (editingBuyer._id) {
         await buyerService.updateBuyer(editingBuyer._id, deliveryPayload);
       }
@@ -779,6 +721,20 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       return;
     }
 
+    const builtItems = (formData.deliveryItems || [])
+      .map((it) => {
+        const q = parseFloat(it.quantity);
+        const r = parseFloat(it.rate);
+        if (!(q > 0 && r >= 0)) return null;
+        const src = (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow';
+        return { milkSource: src, quantity: q, rate: r };
+      })
+      .filter(Boolean);
+    if (builtItems.length === 0) {
+      Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
+      return;
+    }
+
     if (formData.billingMode === 'custom') {
       const br = String(formData.billingDayOfMonth || '').trim();
       if (!br) {
@@ -792,134 +748,8 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       }
     }
 
-    const mqRawC = String(formData.morningQuantity || '').trim();
-    const eqRawC = String(formData.eveningQuantity || '').trim();
-    const mqParsedC = mqRawC === '' ? NaN : parseFloat(mqRawC);
-    const eqParsedC = eqRawC === '' ? NaN : parseFloat(eqRawC);
-    const mqNC = Number.isFinite(mqParsedC) && mqParsedC >= 0 ? mqParsedC : 0;
-    const eqNC = Number.isFinite(eqParsedC) && eqParsedC >= 0 ? eqParsedC : 0;
-    const shiftSplitActiveCreate = mqNC > 0 || eqNC > 0;
-
-    const applyScheduleBillingCreatePayload = (deliveryPayload) => {
-      if (formData.deliveryScheduleType === 'daily') {
-        deliveryPayload.deliveryDays = [];
-        deliveryPayload.deliveryCycleDays = null;
-        deliveryPayload.deliveryCycleStartDate = null;
-      } else if (formData.deliveryScheduleType === 'specific_days') {
-        deliveryPayload.deliveryDays = formData.deliveryDays && formData.deliveryDays.length ? formData.deliveryDays : [];
-        deliveryPayload.deliveryCycleDays = null;
-        deliveryPayload.deliveryCycleStartDate = null;
-      } else {
-        const cycleDays = parseInt(formData.deliveryCycleDays, 10) || 2;
-        deliveryPayload.deliveryDays = null;
-        deliveryPayload.deliveryCycleDays = cycleDays;
-        deliveryPayload.deliveryCycleStartDate = formData.deliveryCycleStartDate
-          ? new Date(formData.deliveryCycleStartDate).toISOString()
-          : null;
-      }
-      if (formData.billingMode === 'none') {
-        deliveryPayload.billingMode = null;
-        deliveryPayload.billingDayOfMonth = null;
-      } else if (formData.billingMode === 'daily') {
-        deliveryPayload.billingMode = 'daily';
-        deliveryPayload.billingDayOfMonth = null;
-      } else if (formData.billingMode === 'month_end') {
-        deliveryPayload.billingMode = 'month_end';
-        deliveryPayload.billingDayOfMonth = null;
-      } else if (formData.billingMode === 'custom') {
-        deliveryPayload.billingMode = 'custom';
-        deliveryPayload.billingDayOfMonth = parseInt(String(formData.billingDayOfMonth || '').trim(), 10);
-      }
-    };
-
     try {
       setLoading(true);
-
-      if (shiftSplitActiveCreate) {
-        const linesWithQty = (formData.deliveryItems || []).filter((it) => parseFloat(String(it.quantity || '').trim()) > 0);
-        if (linesWithQty.length > 1) {
-          Alert.alert(
-            'Error',
-            'Morning/evening split uses one milk type only. Remove extra milk lines or clear morning/evening litres.',
-          );
-          return;
-        }
-        const line0 = linesWithQty[0] || (formData.deliveryItems || [])[0];
-        if (!line0) {
-          Alert.alert('Error', 'Select milk type and enter rate (₹/L)');
-          return;
-        }
-        const r = parseFloat(String(line0.rate || '').trim());
-        if (!Number.isFinite(r) || r < 0) {
-          Alert.alert('Error', 'Enter valid rate (₹/L)');
-          return;
-        }
-        const milkSource = (line0.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(line0.milkSource)) ? line0.milkSource : 'cow';
-        const fixedPrice = r;
-        const dailyQuantity = mqNC + eqNC;
-
-        await authService.signup(
-          formData.name.trim(),
-          formData.email.trim() || '',
-          '123456#',
-          formData.mobile.trim(),
-          undefined,
-          undefined,
-          fixedPrice,
-          dailyQuantity,
-          2,
-          milkSource,
-        );
-
-        await loadData(true);
-
-        const deliveryPayload = {
-          deliveryItems: [],
-          morningQuantity: mqNC,
-          eveningQuantity: eqNC,
-          quantity: dailyQuantity,
-          rate: r,
-          milkSource,
-        };
-        applyScheduleBillingCreatePayload(deliveryPayload);
-
-        const mobileTrim = formData.mobile.trim();
-        const allBuyers = await buyerService.getBuyers(false);
-        const newBuyer = allBuyers.find((b) => (b.mobile || '').toString().trim() === mobileTrim);
-        if (newBuyer && newBuyer._id) {
-          await buyerService.updateBuyer(newBuyer._id, deliveryPayload);
-        }
-
-        setFormData({
-          name: '', mobile: '', email: '', milkFixedPrice: '', dailyMilkQuantity: '', milkSource: 'cow',
-          deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
-          deliveryScheduleType: 'daily', deliveryDays: [], deliveryCycleDays: '2',
-          deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
-          billingMode: 'none',
-          billingDayOfMonth: '',
-          morningQuantity: '',
-          eveningQuantity: '',
-        });
-        setShowAddForm(false);
-        await loadData(true);
-        Alert.alert('Success', 'Buyer created successfully!');
-        return;
-      }
-
-      const builtItems = (formData.deliveryItems || [])
-        .map((it) => {
-          const q = parseFloat(it.quantity);
-          const r = parseFloat(it.rate);
-          if (!(q > 0 && r >= 0)) return null;
-          const src = (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow';
-          return { milkSource: src, quantity: q, rate: r };
-        })
-        .filter(Boolean);
-      if (builtItems.length === 0) {
-        Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
-        return;
-      }
-
       const first = builtItems[0];
       const fixedPrice = first.rate;
       const dailyQuantity = builtItems.reduce((s, it) => s + it.quantity, 0);
@@ -941,13 +771,42 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       await loadData(true);
 
       const deliveryPayload = {};
-      applyScheduleBillingCreatePayload(deliveryPayload);
+      if (formData.deliveryScheduleType === 'daily') {
+        deliveryPayload.deliveryDays = [];
+        deliveryPayload.deliveryCycleDays = null;
+        deliveryPayload.deliveryCycleStartDate = null;
+      } else if (formData.deliveryScheduleType === 'specific_days') {
+        deliveryPayload.deliveryDays = formData.deliveryDays && formData.deliveryDays.length ? formData.deliveryDays : [];
+        deliveryPayload.deliveryCycleDays = null;
+        deliveryPayload.deliveryCycleStartDate = null;
+      } else {
+        const cycleDays = parseInt(formData.deliveryCycleDays, 10) || 2;
+        deliveryPayload.deliveryDays = null;
+        deliveryPayload.deliveryCycleDays = cycleDays;
+        deliveryPayload.deliveryCycleStartDate = formData.deliveryCycleStartDate
+          ? new Date(formData.deliveryCycleStartDate).toISOString()
+          : null;
+      }
       deliveryPayload.deliveryItems = builtItems;
       deliveryPayload.quantity = first.quantity;
       deliveryPayload.rate = first.rate;
       deliveryPayload.milkSource = milkSource;
-      deliveryPayload.morningQuantity = 0;
-      deliveryPayload.eveningQuantity = 0;
+      if (formData.billingMode === 'none') {
+        deliveryPayload.billingMode = null;
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'daily') {
+        deliveryPayload.billingMode = 'daily';
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'month_end') {
+        deliveryPayload.billingMode = 'month_end';
+        deliveryPayload.billingDayOfMonth = null;
+      } else if (formData.billingMode === 'custom') {
+        deliveryPayload.billingMode = 'custom';
+        deliveryPayload.billingDayOfMonth = parseInt(String(formData.billingDayOfMonth || '').trim(), 10);
+      }
+      if (formData.deliveryShift === 'morning' || formData.deliveryShift === 'evening' || formData.deliveryShift === 'both') {
+        deliveryPayload.deliveryShift = formData.deliveryShift;
+      }
 
       const mobileTrim = formData.mobile.trim();
       const allBuyers = await buyerService.getBuyers(false);
@@ -963,8 +822,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
         deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
         billingMode: 'none',
         billingDayOfMonth: '',
-        morningQuantity: '',
-        eveningQuantity: '',
+        deliveryShift: 'both',
       });
       setShowAddForm(false);
       await loadData(true);
@@ -1628,32 +1486,6 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
               />
               <Text style={styles.label}>Milk delivery (per day) *</Text>
               <Text style={styles.hint}>Add one or more milk types with quantity and rate. Quick Sale &quot;Delivered&quot; will create all in one go.</Text>
-              <Text style={styles.label}>Morning / evening (optional)</Text>
-              <Text style={styles.hint}>
-                Enter litres for each shift to get two columns in Quick Sale (same ₹/L for both). One milk type only. Leave both empty to use the milk lines above only.
-              </Text>
-              <View style={styles.deliveryItemInputRow}>
-                <View style={styles.deliveryItemField}>
-                  <Text style={styles.deliveryItemFieldLabel}>Morning (L)</Text>
-                  <Input
-                    placeholder="0"
-                    value={formData.morningQuantity}
-                    onChangeText={(text) => setFormData({ ...formData, morningQuantity: text })}
-                    keyboardType="decimal-pad"
-                    style={[styles.input, styles.deliveryItemInput]}
-                  />
-                </View>
-                <View style={styles.deliveryItemField}>
-                  <Text style={styles.deliveryItemFieldLabel}>Evening (L)</Text>
-                  <Input
-                    placeholder="0"
-                    value={formData.eveningQuantity}
-                    onChangeText={(text) => setFormData({ ...formData, eveningQuantity: text })}
-                    keyboardType="decimal-pad"
-                    style={[styles.input, styles.deliveryItemInput]}
-                  />
-                </View>
-              </View>
               {(formData.deliveryItems || []).map((item, idx) => (
                 <View key={idx} style={styles.deliveryItemCard}>
                   <Text style={styles.deliveryItemCardTitle}>Milk type</Text>
@@ -1723,6 +1555,25 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
               >
                 <Text style={styles.addDeliveryItemBtnText}>+ Add another milk type</Text>
               </TouchableOpacity>
+
+              <Text style={styles.label}>Delivery shift (Quick Sale)</Text>
+              <Text style={styles.hint}>Which delivery round applies: morning, evening, or both.</Text>
+              <View style={styles.billingModeRow}>
+                {[
+                  { id: 'morning', label: 'Morning' },
+                  { id: 'evening', label: 'Evening' },
+                  { id: 'both', label: 'Both' },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[styles.billingModeChip, formData.deliveryShift === opt.id && styles.billingModeChipActive]}
+                    onPress={() => setFormData({ ...formData, deliveryShift: opt.id })}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.billingModeChipText, formData.deliveryShift === opt.id && styles.billingModeChipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <Text style={styles.label}>Auto billing</Text>
               <Text style={styles.hint}>Bill closes at 23:59 IST. Pick how often to generate a bill.</Text>
@@ -1850,8 +1701,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                     deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
                     billingMode: 'none',
                     billingDayOfMonth: '',
-                    morningQuantity: '',
-                    eveningQuantity: '',
+                    deliveryShift: 'both',
                   });
                 }}
                 style={styles.closeButton}
@@ -1890,32 +1740,6 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
 
               <Text style={styles.label}>Milk delivery (per day) *</Text>
               <Text style={styles.hint}>Add one or more milk types with quantity and rate. Quick Sale &quot;Delivered&quot; will create all in one go.</Text>
-              <Text style={styles.label}>Morning / evening (optional)</Text>
-              <Text style={styles.hint}>
-                Enter litres for each shift to get two columns in Quick Sale (same ₹/L for both). One milk type only. Leave both empty to use the milk lines above only.
-              </Text>
-              <View style={styles.deliveryItemInputRow}>
-                <View style={styles.deliveryItemField}>
-                  <Text style={styles.deliveryItemFieldLabel}>Morning (L)</Text>
-                  <Input
-                    placeholder="0"
-                    value={formData.morningQuantity}
-                    onChangeText={(text) => setFormData({ ...formData, morningQuantity: text })}
-                    keyboardType="decimal-pad"
-                    style={[styles.input, styles.deliveryItemInput]}
-                  />
-                </View>
-                <View style={styles.deliveryItemField}>
-                  <Text style={styles.deliveryItemFieldLabel}>Evening (L)</Text>
-                  <Input
-                    placeholder="0"
-                    value={formData.eveningQuantity}
-                    onChangeText={(text) => setFormData({ ...formData, eveningQuantity: text })}
-                    keyboardType="decimal-pad"
-                    style={[styles.input, styles.deliveryItemInput]}
-                  />
-                </View>
-              </View>
               {(formData.deliveryItems || []).map((item, idx) => (
                 <View key={idx} style={styles.deliveryItemCard}>
                   <Text style={styles.deliveryItemCardTitle}>Milk type</Text>
@@ -1985,6 +1809,25 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
               >
                 <Text style={styles.addDeliveryItemBtnText}>+ Add another milk type</Text>
               </TouchableOpacity>
+
+              <Text style={styles.label}>Delivery shift (Quick Sale)</Text>
+              <Text style={styles.hint}>Which delivery round applies: morning, evening, or both.</Text>
+              <View style={styles.billingModeRow}>
+                {[
+                  { id: 'morning', label: 'Morning' },
+                  { id: 'evening', label: 'Evening' },
+                  { id: 'both', label: 'Both' },
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[styles.billingModeChip, formData.deliveryShift === opt.id && styles.billingModeChipActive]}
+                    onPress={() => setFormData({ ...formData, deliveryShift: opt.id })}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.billingModeChipText, formData.deliveryShift === opt.id && styles.billingModeChipTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <Text style={styles.label}>Auto billing</Text>
               <Text style={styles.hint}>Bill closes at 23:59 IST. Pick how often to generate a bill.</Text>
