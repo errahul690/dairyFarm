@@ -43,6 +43,8 @@ const listBuyers = async (req, res) => {
           billingDayOfMonth: buyer.billingDayOfMonth,
           lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
           deliveryShift: buyer.deliveryShift || "both",
+          morningDeliveryItems: buyer.morningDeliveryItems,
+          eveningDeliveryItems: buyer.eveningDeliveryItems,
           createdAt: buyer.createdAt,
           updatedAt: buyer.updatedAt,
         };
@@ -85,6 +87,8 @@ const getMyBuyerProfile = async (req, res) => {
       billingDayOfMonth: buyer.billingDayOfMonth,
       lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
       deliveryShift: buyer.deliveryShift || "both",
+      morningDeliveryItems: buyer.morningDeliveryItems,
+      eveningDeliveryItems: buyer.eveningDeliveryItems,
     });
   } catch (error) {
     console.error("[buyers] getMyBuyerProfile:", error);
@@ -246,7 +250,7 @@ const updateBuyer = async (req, res) => {
   try {
     const { id } = req.params;
     const updates = req.body || {};
-    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryItems", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate", "billingMode", "billingDayOfMonth", "deliveryShift"];
+    const allowed = ["active", "quantity", "rate", "name", "milkSource", "deliveryItems", "morningDeliveryItems", "eveningDeliveryItems", "deliveryDays", "deliveryCycleDays", "deliveryCycleStartDate", "billingMode", "billingDayOfMonth", "deliveryShift"];
     const filtered = {};
     for (const key of allowed) {
       if (updates[key] !== undefined) filtered[key] = updates[key];
@@ -258,19 +262,41 @@ const updateBuyer = async (req, res) => {
       }
       filtered.deliveryShift = ds;
     }
+    const normalizeDeliveryLines = (arr, label) => {
+      if (!Array.isArray(arr)) return { ok: true, value: arr };
+      const seen = new Set();
+      const lines = [];
+      for (const item of arr) {
+        if (!item || typeof item !== "object") continue;
+        const src = (item.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(String(item.milkSource).toLowerCase()))
+          ? String(item.milkSource).toLowerCase()
+          : "cow";
+        if (seen.has(src)) {
+          return { ok: false, message: `${label}: duplicate milk type "${src}". Use one row per type.` };
+        }
+        seen.add(src);
+        const q = Number(item.quantity);
+        const r = Number(item.rate);
+        if (!(q > 0 && r >= 0)) continue;
+        lines.push({ milkSource: src, quantity: q, rate: r });
+      }
+      return { ok: true, value: lines };
+    };
+
     if (Array.isArray(filtered.deliveryItems)) {
-      filtered.deliveryItems = filtered.deliveryItems
-        .map((item) => {
-          if (!item || typeof item !== "object") return null;
-          const src = (item.milkSource && ["cow", "buffalo", "sheep", "goat"].includes(String(item.milkSource).toLowerCase()))
-            ? String(item.milkSource).toLowerCase()
-            : "cow";
-          const q = Number(item.quantity);
-          const r = Number(item.rate);
-          if (!(q > 0 && r >= 0)) return null;
-          return { milkSource: src, quantity: q, rate: r };
-        })
-        .filter(Boolean);
+      const r = normalizeDeliveryLines(filtered.deliveryItems, "deliveryItems");
+      if (!r.ok) return res.status(400).json({ error: r.message });
+      filtered.deliveryItems = r.value;
+    }
+    if (Array.isArray(filtered.morningDeliveryItems)) {
+      const r = normalizeDeliveryLines(filtered.morningDeliveryItems, "morningDeliveryItems");
+      if (!r.ok) return res.status(400).json({ error: r.message });
+      filtered.morningDeliveryItems = r.value;
+    }
+    if (Array.isArray(filtered.eveningDeliveryItems)) {
+      const r = normalizeDeliveryLines(filtered.eveningDeliveryItems, "eveningDeliveryItems");
+      if (!r.ok) return res.status(400).json({ error: r.message });
+      filtered.eveningDeliveryItems = r.value;
     }
     if (filtered.deliveryCycleStartDate != null && typeof filtered.deliveryCycleStartDate === "string") {
       filtered.deliveryCycleStartDate = new Date(filtered.deliveryCycleStartDate);
@@ -329,6 +355,8 @@ const updateBuyer = async (req, res) => {
       active: updated.active !== false,
       milkSource: updated.milkSource || 'cow',
       deliveryItems: updated.deliveryItems,
+      morningDeliveryItems: updated.morningDeliveryItems,
+      eveningDeliveryItems: updated.eveningDeliveryItems,
       deliveryDays: updated.deliveryDays,
       deliveryCycleDays: updated.deliveryCycleDays,
       deliveryCycleStartDate: updated.deliveryCycleStartDate,

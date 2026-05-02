@@ -268,11 +268,29 @@ const createQuickSale = async (req, res) => {
     const buyerName = user.name || buyer.name;
     const saleDeliveryShift = parsed.data.deliveryShift === "evening" ? "evening" : "morning";
 
+    /** Multi-line quick sale: per-shift lines when buyer is "both", else deliveryItems. */
+    const shiftDeliveryLines = (b, shift) => {
+      const ds = b.deliveryShift || "both";
+      if (ds !== "both") {
+        return Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0 ? b.deliveryItems : null;
+      }
+      const prop = shift === "evening" ? "eveningDeliveryItems" : "morningDeliveryItems";
+      const spec = b[prop];
+      if (spec !== undefined && spec !== null) {
+        return Array.isArray(spec) ? spec : null;
+      }
+      return Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0 ? b.deliveryItems : null;
+    };
+
     // "Delivered" (no custom qty/rate): use deliveryItems if set, else single quantity/rate/milkSource
     if ((quantity == null || quantity <= 0) && (pricePerLiter == null || pricePerLiter < 0)) {
-      const items = Array.isArray(buyer.deliveryItems) && buyer.deliveryItems.length > 0
-        ? buyer.deliveryItems
-        : null;
+      const items = shiftDeliveryLines(buyer, saleDeliveryShift);
+
+      if (Array.isArray(items) && items.length === 0) {
+        return res.status(400).json({
+          error: `Set ${saleDeliveryShift} milk lines for this buyer (Buyers → edit → ${saleDeliveryShift} section).`,
+        });
+      }
 
       if (items && items.length > 0) {
         const transactions = [];

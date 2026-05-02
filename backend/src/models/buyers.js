@@ -93,6 +93,26 @@ const BuyerSchema = new mongoose.Schema({
     default: 'both',
     required: false,
     trim: true,
+  },
+  /** When deliveryShift is "both": milk lines for morning round only (one row per milkSource). */
+  morningDeliveryItems: {
+    type: [{
+      milkSource: { type: String, enum: ['cow', 'buffalo', 'sheep', 'goat'], required: true },
+      quantity: { type: Number, required: true, min: 0 },
+      rate: { type: Number, required: true, min: 0 }
+    }],
+    required: false,
+    default: undefined
+  },
+  /** When deliveryShift is "both": milk lines for evening round only (one row per milkSource). */
+  eveningDeliveryItems: {
+    type: [{
+      milkSource: { type: String, enum: ['cow', 'buffalo', 'sheep', 'goat'], required: true },
+      quantity: { type: Number, required: true, min: 0 },
+      rate: { type: Number, required: true, min: 0 }
+    }],
+    required: false,
+    default: undefined
   }
 }, {
   timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
