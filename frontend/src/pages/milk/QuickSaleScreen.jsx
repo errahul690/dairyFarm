@@ -134,6 +134,20 @@ function formatPlannedTotalsLine(totalsBySource) {
   return parts.length ? parts.join('\n') : '—';
 }
 
+function isCancelledForBuyerDate(buyer, dateStr, overridesByDate) {
+  const mobile = String(buyer.mobile || '').trim();
+  if (!mobile) return false;
+  const overrides = overridesByDate[dateStr] || [];
+  return overrides.some((o) => o.type === 'cancelled' && String(o.customerMobile).trim() === mobile);
+}
+
+/** Scheduled delivery day marked as no delivery (cancel override). */
+function isBuyerSkippedForDate(buyer, dateStr, overridesByDate) {
+  if (!isCancelledForBuyerDate(buyer, dateStr, overridesByDate)) return false;
+  const dateStart = getStartOfDayISTFromString(dateStr);
+  return isDeliveryDay(buyer, dateStart);
+}
+
 function isDeliveryDay(buyer, dateStartIST) {
   const deliveryDays = buyer.deliveryDays;
   if (deliveryDays && Array.isArray(deliveryDays) && deliveryDays.length > 0) {
@@ -448,11 +462,11 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       Alert.alert('Already delivered', 'This shift already has sale(s) for this day.');
       return;
     }
-    const ds = buyer.deliveryShift || 'both';
+    const buyerShiftPref = buyer.deliveryShift || 'both';
     let hasDeliveryItems;
     let dailyQ;
     let rateOk;
-    if (ds === 'both') {
+    if (buyerShiftPref === 'both') {
       const lines = shift === 'evening' ? buyer.eveningDeliveryItems : buyer.morningDeliveryItems;
       if (Array.isArray(lines) && lines.length > 0) {
         hasDeliveryItems = true;
@@ -656,6 +670,68 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
   };
 
+  const salesForBuyerDate = useCallback(
+    (mobile, ds) => {
+      const m = String(mobile).trim();
+      return transactions.filter(
+        (t) => t.type === 'sale' && String(t.buyerPhone || '').trim() === m && getYmdInIST(t.date) === ds
+      );
+    },
+    [transactions]
+  );
+
+  const handleSkipDelivery = (buyer, ds) => {
+    const mobile = String(buyer.mobile || '').trim();
+    if (!mobile) return;
+    const txs = salesForBuyerDate(mobile, ds);
+    if (txs.length > 0) {
+      Alert.alert(
+        'Cannot skip',
+        `${buyer.name} already has milk recorded for this date. Delete sale(s) with Del first, then skip.`
+      );
+      return;
+    }
+    Alert.alert('No delivery today?', `Mark ${buyer.name} as no delivery on ${ds}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'No delivery',
+        onPress: async () => {
+          try {
+            setActionLoading(`skip-${mobile}-${ds}`);
+            await deliveryOverrideService.setOverride(ds, mobile, 'cancelled');
+            await loadData(true);
+          } catch (e) {
+            Alert.alert('Error', e?.message || 'Could not skip delivery.');
+          } finally {
+            setActionLoading(null);
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleUndoSkip = (buyer, ds) => {
+    const mobile = String(buyer.mobile || '').trim();
+    if (!mobile) return;
+    Alert.alert('Undo skip?', `Restore scheduled delivery for ${buyer.name} on ${ds}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Undo',
+        onPress: async () => {
+          try {
+            setActionLoading(`unskip-${mobile}-${ds}`);
+            await deliveryOverrideService.removeOverride(ds, mobile, 'cancelled');
+            await loadData(true);
+          } catch (e) {
+            Alert.alert('Error', e?.message || 'Could not undo skip.');
+          } finally {
+            setActionLoading(null);
+          }
+        },
+      },
+    ]);
+  };
+
   const handleDeleteCell = (buyer, ds, shift) => {
     if (!buyerAllowsShift(buyer, shift)) return;
     const txs = salesForBuyerDateShift(buyer.mobile, ds, shift);
@@ -729,6 +805,9 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
 
     if (!delivered) {
       const busyHere = actionLoading === `${String(b.mobile).trim()}-${dateStr}-${shift}`;
+      const busySkip = actionLoading === `skip-${String(b.mobile).trim()}-${dateStr}`;
+      const showSkipHere =
+        shift === 'morning' || !buyerAllowsShift(b, 'morning');
       return (
         <View style={[styles.cell, { minHeight: ROW_MIN_H }]}>
           <TouchableOpacity
@@ -749,6 +828,17 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
               Custom
             </Text>
           </TouchableOpacity>
+          {showSkipHere && (
+            <TouchableOpacity
+              style={[styles.miniBtn, styles.miniSkip]}
+              onPress={() => handleSkipDelivery(b, dateStr)}
+              disabled={busySkip || actionLoading !== null}
+            >
+              <Text style={styles.miniBtnTextSkip} numberOfLines={2}>
+                {busySkip ? '...' : 'No delivery'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       );
     }
@@ -833,7 +923,10 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
               </View>
             </View>
           </View>
-          {buyersSorted.map((b) => (
+          {buyersSorted.map((b) => {
+            const skippedToday = isBuyerSkippedForDate(b, dateStr, overridesByDate);
+            const busyUnskip = actionLoading === `unskip-${String(b.mobile).trim()}-${dateStr}`;
+            return (
             <View key={b.mobile} style={styles.tableRow}>
               <View style={[styles.nameCell, { width: NAME_COL_W, minHeight: ROW_MIN_H }]}>
                 <View style={styles.nameCellTopRow}>
@@ -897,13 +990,27 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                   </>
                 ) : null}
               </View>
-              <View style={styles.cellWrapRow}>
-                <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'morning')}</View>
-                <View style={styles.cellWrapDivider} />
-                <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'evening')}</View>
-              </View>
+              {skippedToday ? (
+                <View style={[styles.cell, styles.cellSkipped, { flex: 1, minHeight: ROW_MIN_H }]}>
+                  <Text style={styles.cellSkippedLabel}>No delivery today</Text>
+                  <TouchableOpacity
+                    style={styles.skipUndoBtn}
+                    onPress={() => handleUndoSkip(b, dateStr)}
+                    disabled={busyUnskip || actionLoading !== null}
+                  >
+                    <Text style={styles.skipUndoBtnText}>{busyUnskip ? '...' : 'Undo'}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.cellWrapRow}>
+                  <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'morning')}</View>
+                  <View style={styles.cellWrapDivider} />
+                  <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'evening')}</View>
+                </View>
+              )}
             </View>
-          ))}
+            );
+          })}
         </ScrollView>
       )}
 
@@ -1392,8 +1499,21 @@ const styles = StyleSheet.create({
   miniBtn: { borderRadius: 6, paddingVertical: 8, alignItems: 'center', marginBottom: 4 },
   miniDeliver: { backgroundColor: '#4CAF50' },
   miniCust: { backgroundColor: '#2196F3' },
+  miniSkip: { backgroundColor: '#fff3e0', borderWidth: 1, borderColor: '#ffb74d' },
   miniBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   miniBtnTextDelivered: { color: '#fff', fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  miniBtnTextSkip: { color: '#e65100', fontSize: 10, fontWeight: '800', textAlign: 'center' },
+  cellSkipped: { backgroundColor: '#fff8e1', justifyContent: 'center', alignItems: 'center', paddingVertical: 10 },
+  cellSkippedLabel: { fontSize: 12, fontWeight: '700', color: '#e65100', marginBottom: 6, textAlign: 'center' },
+  skipUndoBtn: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ffb74d',
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  skipUndoBtnText: { color: '#e65100', fontSize: 12, fontWeight: '800' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
   modalBox: { backgroundColor: '#fff', borderRadius: 12, padding: 20 },
   modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
