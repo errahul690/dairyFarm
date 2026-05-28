@@ -691,7 +691,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Buyers"
         onNavigate={onNavigate}
         isAuthenticated={true}

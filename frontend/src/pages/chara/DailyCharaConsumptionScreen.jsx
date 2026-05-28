@@ -10,7 +10,7 @@ export default function DailyCharaConsumptionScreen({ onNavigate }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Daily Consumption"
         onNavigate={onNavigate}
       />

@@ -44,7 +44,7 @@ async function sendOTPEmail(toEmail, otp) {
   const { transporter, from, isEthereal } = transport;
   try {
     const info = await transporter.sendMail({
-      from: `"HiTech Dairy Farm" <${from}>`,
+      from: `"Rahul Dairy Farm" <${from}>`,
       to: toEmail.trim(),
       subject: 'Password Reset OTP',
       text: `Your OTP is: ${otp}. Valid for 10 minutes.`,

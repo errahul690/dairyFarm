@@ -11,7 +11,7 @@ export default function ProfitLossScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Profit/Loss"
         onNavigate={onNavigate}
         isAuthenticated={true}

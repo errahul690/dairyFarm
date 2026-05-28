@@ -751,7 +751,7 @@ export default function MilkScreen({ onNavigate, onLogout, openAddSale, onConsum
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Milk"
         onNavigate={onNavigate}
         isAuthenticated={true}

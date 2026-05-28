@@ -899,7 +899,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Quick Sale"
         onNavigate={onNavigate}
         isAuthenticated={true}

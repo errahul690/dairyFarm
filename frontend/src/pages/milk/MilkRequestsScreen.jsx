@@ -118,7 +118,7 @@ export default function MilkRequestsScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Milk Requests"
         onNavigate={onNavigate}
         onLogout={onLogout}

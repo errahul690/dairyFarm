@@ -139,7 +139,7 @@ export default function CharaScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Chara (Fodder)"
         onNavigate={onNavigate}
         isAuthenticated={true}

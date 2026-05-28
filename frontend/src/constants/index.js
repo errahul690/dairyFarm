@@ -3,7 +3,7 @@
  * Centralized constants for the application
  */
 
-export const APP_NAME = 'HiTech Dairy Farm';
+export const APP_NAME = 'RDF';
 
 export const ROUTES = {
   LOGIN: 'Login',

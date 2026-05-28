@@ -136,7 +136,7 @@ export default function PendingPaymentsScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Payments to collect"
         onNavigate={onNavigate}
         isAuthenticated={true}

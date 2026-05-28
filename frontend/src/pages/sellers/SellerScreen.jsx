@@ -208,7 +208,7 @@ export default function SellerScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Sellers"
         onNavigate={onNavigate}
         isAuthenticated={true}

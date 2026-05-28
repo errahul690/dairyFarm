@@ -10,7 +10,7 @@ export default function CharaPurchaseScreen({ onNavigate }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Chara Purchase"
         onNavigate={onNavigate}
       />

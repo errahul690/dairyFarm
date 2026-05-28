@@ -116,7 +116,7 @@ export default function ForgotPasswordScreen({ onNavigate }) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>HiTech Dairy Farm</Text>
+        <Text style={styles.headerTitle}>RDF</Text>
         <Text style={styles.headerSubtitle}>Forgot Password</Text>
       </View>
       <ScrollView style={styles.content}>

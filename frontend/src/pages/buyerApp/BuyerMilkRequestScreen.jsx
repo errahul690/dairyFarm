@@ -76,7 +76,7 @@ export default function BuyerMilkRequestScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Milk Request"
         onNavigate={onNavigate}
         isAuthenticated={true}

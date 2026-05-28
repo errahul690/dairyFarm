@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "HiTech Dairy Farm Backend (Node + Express)",
+  "description": "Rahul Dairy Farm Backend (Node + Express)",
   "main": "src/server.js",
   "scripts": {
     "dev": "node src/server.js",
@@ -11,7 +11,7 @@
     "build": "echo 'No build step needed for Node.js'"
   },
   "keywords": [],
-  "author": "HiTech Dairy Farm",
+  "author": "Rahul Dairy Farm",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {

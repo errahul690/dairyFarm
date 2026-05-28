@@ -53,7 +53,7 @@ export default function BuyerPaymentHistoryScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Payment History"
         onNavigate={onNavigate}
         isAuthenticated={true}

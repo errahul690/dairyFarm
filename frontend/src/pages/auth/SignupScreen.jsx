@@ -98,7 +98,7 @@ export default function SignupScreen({ onNavigate }) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>HiTech Dairy Farm</Text>
+        <Text style={styles.headerTitle}>Rahul Dairy Farm</Text>
         <Text style={styles.headerSubtitle}>Signup</Text>
       </View>
       <ScrollView contentContainerStyle={styles.content}>

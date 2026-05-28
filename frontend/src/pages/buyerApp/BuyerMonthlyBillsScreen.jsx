@@ -130,7 +130,7 @@ export default function BuyerMonthlyBillsScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Monthly Bills"
         onNavigate={onNavigate}
         isAuthenticated={true}

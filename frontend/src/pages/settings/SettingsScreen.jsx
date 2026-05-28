@@ -79,7 +79,7 @@ export default function SettingsScreen({ onNavigate, onLogout }) {
         />
         <Text style={styles.label}>UPI Name (shown to buyer)</Text>
         <Input
-          placeholder="e.g. HiTech Dairy Farm"
+          placeholder="e.g. RDF"
           value={upiName}
           onChangeText={setUpiName}
           style={styles.input}

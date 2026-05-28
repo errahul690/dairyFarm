@@ -275,7 +275,7 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Delivery Schedule"
         onNavigate={onNavigate}
         isAuthenticated={true}

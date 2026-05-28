@@ -197,7 +197,7 @@ export default function BuyerDashboardScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="HiTech Dairy Farm"
+        title="Rahul Dairy Farm"
         subtitle="Buyer Dashboard"
         onNavigate={onNavigate}
         isAuthenticated={true}
