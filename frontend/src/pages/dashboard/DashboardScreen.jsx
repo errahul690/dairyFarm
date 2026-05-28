@@ -202,7 +202,7 @@ export default function DashboardScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="RDF"
+        title="Rahul Dairy Farm"
         subtitle="Dashboard"
         onNavigate={onNavigate}
         isAuthenticated={true}

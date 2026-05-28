@@ -2,6 +2,7 @@ const { z } = require("zod");
 const {
   getAllMilkTransactions,
   getMilkRequests,
+  getInstallRequests,
   addMilkTransaction,
   getMilkTransactionById,
   updateMilkTransaction: updateMilkTransactionModel,
@@ -134,6 +135,92 @@ const listMilkRequests = async (req, res) => {
   }
 };
 
+/** Admin only: list install/delivery requests submitted from login (requestSource === 'install_request') */
+const listInstallRequests = async (req, res) => {
+  try {
+    const requests = await getInstallRequests();
+    return res.json(requests);
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to fetch install requests" });
+  }
+};
+
+const installRequestSchema = z.object({
+  name: z.string().min(2).max(80),
+  mobile: z.string().regex(/^[0-9]{10}$/),
+  address: z.string().min(5).max(300),
+  landmark: z.string().max(120).optional().or(z.literal("")),
+  milkSource: z.enum(["cow", "buffalo", "sheep", "goat"]).optional(),
+  quantity: z.number().positive().optional(),
+  notes: z.string().max(300).optional().or(z.literal("")),
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  mapsLink: z.string().max(500).optional().or(z.literal("")),
+});
+
+/** Public (no auth): submit install/delivery request with location */
+const createInstallRequest = async (req, res) => {
+  const parsed = installRequestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const d = parsed.data;
+    const milkSource = d.milkSource || "cow";
+    const qty = d.quantity != null ? Number(d.quantity) : 1;
+
+    const tx = await addMilkTransaction({
+      type: "sale",
+      requestSource: "install_request",
+      date: new Date(),
+      quantity: qty,
+      pricePerLiter: 0,
+      totalAmount: 0,
+      buyer: d.name,
+      buyerPhone: d.mobile,
+      notes: d.notes && String(d.notes).trim() ? String(d.notes).trim() : "Install/Delivery request",
+      milkSource,
+      installRequest: {
+        name: d.name,
+        mobile: d.mobile,
+        address: d.address,
+        landmark: d.landmark || undefined,
+        lat: d.lat,
+        lng: d.lng,
+        mapsLink: d.mapsLink || undefined,
+      },
+    });
+
+    const locParts = [
+      d.address ? String(d.address).trim() : "",
+      d.landmark ? `Landmark: ${String(d.landmark).trim()}` : "",
+      d.lat != null && d.lng != null ? `GPS: ${d.lat},${d.lng}` : "",
+    ].filter(Boolean);
+    const locLine = locParts.length ? ` · ${locParts.join(" · ")}` : "";
+
+    await createNotification({
+      type: "milk_request",
+      message: `${d.name} requested milk delivery/installation${locLine}`,
+      data: {
+        requestType: "install_request",
+        name: d.name,
+        mobile: d.mobile,
+        address: d.address,
+        landmark: d.landmark || undefined,
+        lat: d.lat,
+        lng: d.lng,
+        mapsLink: d.mapsLink || undefined,
+        milkSource,
+        quantity: qty,
+        milkTransactionId: tx._id,
+      },
+      forRole: 0,
+    });
+
+    return res.status(201).json(tx);
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to create install request" });
+  }
+};
 const createMilkSale = async (req, res) => {
   const parsed = milkTxSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -542,6 +629,8 @@ const getUnpaidMilkTransactions = async (req, res) => {
 module.exports = {
   listMilkTransactions,
   listMilkRequests,
+  listInstallRequests,
+  createInstallRequest,
   createMilkSale,
   createQuickSale,
   createMilkPurchase,

@@ -175,6 +175,38 @@ export const milkService = {
     }));
   },
 
+  /** Admin only: list install/delivery requests submitted from login */
+  getInstallRequests: async () => {
+    const response = await apiClient.get('/milk/install-requests');
+    return (response || []).map((tx) => ({
+      ...tx,
+      date: new Date(tx.date),
+    }));
+  },
+
+  /** Public (no auth): submit install/delivery request with location */
+  submitInstallRequest: async (req) => {
+    const payload = {
+      name: String(req.name || '').trim(),
+      mobile: String(req.mobile || '').trim(),
+      address: String(req.address || '').trim(),
+      landmark: String(req.landmark || '').trim(),
+      notes: String(req.notes || '').trim(),
+      mapsLink: String(req.mapsLink || '').trim(),
+    };
+    if (req.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(req.milkSource)) payload.milkSource = req.milkSource;
+    if (req.quantity != null && Number(req.quantity) > 0) payload.quantity = Number(req.quantity);
+    if (req.lat != null && req.lng != null) {
+      payload.lat = Number(req.lat);
+      payload.lng = Number(req.lng);
+    }
+    const response = await apiClient.post('/milk/install-request', payload);
+    return {
+      ...response,
+      date: new Date(response.date),
+    };
+  },
+
   getUnpaidTransactions: async (customerMobile, customerId = null) => {
     const params = new URLSearchParams();
     if (customerMobile) params.append('customerMobile', customerMobile);

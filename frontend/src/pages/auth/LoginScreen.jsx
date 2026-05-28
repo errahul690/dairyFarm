@@ -95,7 +95,7 @@ export default function LoginScreen({ onNavigate, onLoginSuccess }) {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>RDF</Text>
+        <Text style={styles.headerTitle}>Rahul Dairy Farm</Text>
         <Text style={styles.headerSubtitle}>Login</Text>
       </View>
       <ScrollView style={styles.content}>
@@ -158,6 +158,11 @@ export default function LoginScreen({ onNavigate, onLoginSuccess }) {
             {loginMode === 'password' ? 'Use OTP instead' : 'Use password instead'}
           </Text>
         </TouchableOpacity>
+
+        <View style={{ height: 8 }} />
+        <TouchableOpacity onPress={() => onNavigate('Install Request')} style={styles.installRequestLink}>
+          <Text style={styles.installRequestText}>Need milk delivery? Request here →</Text>
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );
@@ -214,6 +219,20 @@ const styles = StyleSheet.create({
   resendOtp: {
     alignItems: 'center',
     marginTop: 12,
+  },
+  installRequestLink: {
+    alignItems: 'center',
+    marginTop: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#4CAF50',
+  },
+  installRequestText: {
+    color: '#1B5E20',
+    fontSize: 15,
+    fontWeight: '800',
   },
 });
 

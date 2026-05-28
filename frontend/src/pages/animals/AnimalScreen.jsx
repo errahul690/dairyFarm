@@ -201,7 +201,7 @@ export default function AnimalScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="RDF"
+        title="Rahul Dairy Farm"
         subtitle="Animals"
         onNavigate={onNavigate}
         isAuthenticated={true}

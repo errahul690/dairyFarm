@@ -13,6 +13,7 @@ import SellerScreen from './src/pages/sellers/SellerScreen';
 import QuickSaleScreen from './src/pages/milk/QuickSaleScreen';
 import DeliveryScheduleScreen from './src/pages/milk/DeliveryScheduleScreen';
 import MilkRequestsScreen from './src/pages/milk/MilkRequestsScreen';
+import InstallRequestsScreen from './src/pages/milk/InstallRequestsScreen';
 import NotificationsScreen from './src/pages/notifications/NotificationsScreen';
 import AddAdminScreen from './src/pages/admin/AddAdminScreen';
 import AdminListScreen from './src/pages/admin/AdminListScreen';
@@ -30,6 +31,7 @@ import BuyerMonthlyBillsScreen from './src/pages/buyerApp/BuyerMonthlyBillsScree
 import LoginScreen from './src/pages/auth/LoginScreen';
 import SignupScreen from './src/pages/auth/SignupScreen';
 import ForgotPasswordScreen from './src/pages/auth/ForgotPasswordScreen';
+import PublicInstallRequestScreen from './src/pages/public/PublicInstallRequestScreen';
 import { authService } from './src/services/auth/authService';
 import { setOnTokenExpired } from './src/services/api/apiClient';
 
@@ -91,7 +93,7 @@ function App() {
 
   const navigateToScreen = (screen, params) => {
     // Protected screens - only accessible after login
-    const protectedScreens = ['Dashboard', 'Animals', 'Milk', 'Quick Sale', 'Delivery Schedule', 'Milk Requests', 'Notifications', 'Chara', 'Profit/Loss', 'Milk Sales Report', 'Buyer', 'Monthly Summary', 'Seller', 'Payments', 'Pending Payments', 'Payments to collect', 'Admin List', 'Add Admin', 'Settings', 'Buyer Dashboard', 'Milk Request', 'My Schedule', 'Ledger', 'Monthly Bills', 'Transaction History', 'Payment History', 'Pending Payment'];
+    const protectedScreens = ['Dashboard', 'Animals', 'Milk', 'Quick Sale', 'Delivery Schedule', 'Milk Requests', 'Install Requests', 'Notifications', 'Chara', 'Profit/Loss', 'Milk Sales Report', 'Buyer', 'Monthly Summary', 'Seller', 'Payments', 'Pending Payments', 'Payments to collect', 'Admin List', 'Add Admin', 'Settings', 'Buyer Dashboard', 'Milk Request', 'My Schedule', 'Ledger', 'Monthly Bills', 'Transaction History', 'Payment History', 'Pending Payment'];
     
     // If trying to access protected screen without login, redirect to login
     if (protectedScreens.includes(screen) && !isAuthenticated) {
@@ -99,8 +101,8 @@ function App() {
       return;
     }
     
-    // Allow navigation to login/signup/forgot password screens always
-    if (screen === 'Login/Signup' || screen === 'Signup' || screen === 'ForgotPassword') {
+    // Allow navigation to public screens always
+    if (screen === 'Login/Signup' || screen === 'Signup' || screen === 'ForgotPassword' || screen === 'Install Request') {
       setCurrentScreen(screen);
       setNavParams((p) => ({ ...p, [screen]: undefined }));
       return;
@@ -145,6 +147,8 @@ function App() {
           return <SignupScreen onNavigate={navigateToScreen} />;
         case 'ForgotPassword':
           return <ForgotPasswordScreen onNavigate={navigateToScreen} />;
+        case 'Install Request':
+          return <PublicInstallRequestScreen onNavigate={navigateToScreen} />;
         case 'Login/Signup':
         default:
           return <LoginScreen onNavigate={navigateToScreen} onLoginSuccess={handleLoginSuccess} />;
@@ -172,6 +176,8 @@ function App() {
         return <DeliveryScheduleScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Milk Requests':
         return <MilkRequestsScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
+      case 'Install Requests':
+        return <InstallRequestsScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Notifications':
         return <NotificationsScreen onNavigate={navigateToScreen} onLogout={handleLogout} />;
       case 'Chara':

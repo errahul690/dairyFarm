@@ -22,6 +22,7 @@ const baseMenuItems = [
   { id: 31, title: 'Quick Sale', icon: '⚡' },
   { id: 33, title: 'Delivery Schedule', icon: '📅' },
   { id: 32, title: 'Milk Requests', icon: '📋' },
+  { id: 321, title: 'Install Requests', icon: '📍' },
   { id: 4, title: 'Chara', icon: '🌾' },
   { id: 5, title: 'Profit/Loss', icon: '💰' },
   { id: 6, title: 'Milk Sales Report', icon: '📈' },

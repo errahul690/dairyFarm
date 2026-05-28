@@ -114,9 +114,19 @@ const MilkTransactionSchema = new mongoose.Schema({
   },
   requestSource: {
     type: String,
-    enum: ['admin', 'buyer_app'],
+    enum: ['admin', 'buyer_app', 'install_request'],
     default: 'admin',
     required: false
+  },
+  /** Public (pre-login) install/delivery request details. */
+  installRequest: {
+    name: { type: String, required: false, trim: true },
+    mobile: { type: String, required: false, trim: true },
+    address: { type: String, required: false, trim: true },
+    landmark: { type: String, required: false, trim: true },
+    lat: { type: Number, required: false },
+    lng: { type: Number, required: false },
+    mapsLink: { type: String, required: false, trim: true },
   },
   /** Sale only: morning vs evening delivery round (Quick Sale columns). */
   deliveryShift: {
@@ -155,6 +165,8 @@ MilkTransactionSchema.index({ date: -1 });
 MilkTransactionSchema.index({ milkSource: 1 });
 MilkTransactionSchema.index({ paymentStatus: 1 });
 MilkTransactionSchema.index({ requestSource: 1 });
+MilkTransactionSchema.index({ 'installRequest.mobile': 1 });
+MilkTransactionSchema.index({ 'installRequest.lat': 1, 'installRequest.lng': 1 });
 
 const MilkTransaction = mongoose.model('MilkTransaction', MilkTransactionSchema);
 
@@ -194,6 +206,10 @@ async function getAllMilkTransactions(mobileNumber, requestSource = null, userId
 
 async function getMilkRequests() {
   return await MilkTransaction.find({ type: 'sale', requestSource: 'buyer_app' }).sort({ date: -1, createdAt: -1 });
+}
+
+async function getInstallRequests() {
+  return await MilkTransaction.find({ type: 'sale', requestSource: 'install_request' }).sort({ createdAt: -1 });
 }
 
 async function addMilkTransaction(transactionData) {
@@ -310,6 +326,7 @@ module.exports = {
   MilkTransaction,
   getAllMilkTransactions,
   getMilkRequests,
+  getInstallRequests,
   addMilkTransaction,
   getMilkTransactionById,
   updateMilkTransaction,

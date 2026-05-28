@@ -67,7 +67,7 @@ export default function NotificationsScreen({ onNavigate, onLogout }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="RDF"
+        title="Rahul Dairy Farm"
         subtitle="Notifications"
         onNavigate={onNavigate}
         onLogout={onLogout}

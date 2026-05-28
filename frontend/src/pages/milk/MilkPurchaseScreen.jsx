@@ -10,7 +10,7 @@ export default function MilkPurchaseScreen({ onNavigate }) {
   return (
     <View style={styles.container}>
       <HeaderWithMenu
-        title="RDF"
+        title="Rahul Dairy Farm"
         subtitle="Milk Purchase"
         onNavigate={onNavigate}
       />
