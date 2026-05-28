@@ -12,12 +12,14 @@ export async function getOverridesForDate(dateStr) {
  * @param {string} dateStr - YYYY-MM-DD
  * @param {string} customerMobile - 10 digits
  * @param {'cancelled'|'added'} type
+ * @param {'morning'|'evening'|'both'} [deliveryShift] — default both (whole day)
  */
-export async function setOverride(dateStr, customerMobile, type) {
+export async function setOverride(dateStr, customerMobile, type, deliveryShift = 'both') {
   return await apiClient.post('/delivery-overrides', {
     date: dateStr,
     customerMobile: String(customerMobile).trim(),
     type,
+    deliveryShift,
   });
 }
 
@@ -25,12 +27,14 @@ export async function setOverride(dateStr, customerMobile, type) {
  * @param {string} dateStr - YYYY-MM-DD
  * @param {string} customerMobile - 10 digits
  * @param {'cancelled'|'added'} type
+ * @param {'morning'|'evening'|'both'} [deliveryShift] — default both
  */
-export async function removeOverride(dateStr, customerMobile, type) {
+export async function removeOverride(dateStr, customerMobile, type, deliveryShift = 'both') {
   const q = new URLSearchParams({
     date: dateStr,
     customerMobile: String(customerMobile).trim(),
     type,
+    deliveryShift,
   });
   return await apiClient.delete(`/delivery-overrides?${q.toString()}`);
 }

@@ -24,12 +24,12 @@ async function listOverrides(req, res) {
 
 /**
  * POST /delivery-overrides
- * Body: { date: "YYYY-MM-DD", customerMobile: "10digits", type: "cancelled" | "added" }
+ * Body: { date, customerMobile, type, deliveryShift?: "morning"|"evening"|"both" }
  * Role 2 can only set for their own mobile (customerMobile must match or be omitted).
  */
 async function createOverride(req, res) {
   try {
-    const { date, customerMobile, type } = req.body || {};
+    const { date, customerMobile, type, deliveryShift } = req.body || {};
     const dateStr = (date || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       return res.status(400).json({ error: "date required (YYYY-MM-DD)" });
@@ -47,7 +47,10 @@ async function createOverride(req, res) {
     if (isBuyer && customerMobile && String(customerMobile).trim() !== mobile) {
       return res.status(403).json({ error: "You can only set override for your own number" });
     }
-    const doc = await setOverride(dateStr, mobile, type);
+    if (deliveryShift != null && deliveryShift !== "" && !["morning", "evening", "both"].includes(deliveryShift)) {
+      return res.status(400).json({ error: "deliveryShift must be morning, evening, or both" });
+    }
+    const doc = await setOverride(dateStr, mobile, type, deliveryShift);
     return res.status(201).json(doc);
   } catch (err) {
     console.error("[deliveryOverride] createOverride:", err);
@@ -61,7 +64,7 @@ async function createOverride(req, res) {
  */
 async function deleteOverride(req, res) {
   try {
-    const { date, customerMobile, type } = { ...req.query, ...req.body };
+    const { date, customerMobile, type, deliveryShift } = { ...req.query, ...req.body };
     const dateStr = (date || "").trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
       return res.status(400).json({ error: "date required (YYYY-MM-DD)" });
@@ -79,7 +82,10 @@ async function deleteOverride(req, res) {
     if (isBuyer && customerMobile && String(customerMobile).trim() !== mobile) {
       return res.status(403).json({ error: "You can only remove override for your own number" });
     }
-    await removeOverride(dateStr, mobile, type);
+    if (deliveryShift != null && deliveryShift !== "" && !["morning", "evening", "both"].includes(deliveryShift)) {
+      return res.status(400).json({ error: "deliveryShift must be morning, evening, or both" });
+    }
+    await removeOverride(dateStr, mobile, type, deliveryShift);
     return res.json({ success: true });
   } catch (err) {
     console.error("[deliveryOverride] deleteOverride:", err);

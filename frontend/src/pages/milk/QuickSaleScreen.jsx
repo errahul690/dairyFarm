@@ -134,18 +134,41 @@ function formatPlannedTotalsLine(totalsBySource) {
   return parts.length ? parts.join('\n') : '—';
 }
 
-function isCancelledForBuyerDate(buyer, dateStr, overridesByDate) {
+function overrideShiftKey(o) {
+  const s = o?.deliveryShift;
+  if (s === 'morning' || s === 'evening') return s;
+  return 'both';
+}
+
+function isCancelledForBuyerShift(buyer, dateStr, shift, overridesByDate) {
   const mobile = String(buyer.mobile || '').trim();
   if (!mobile) return false;
   const overrides = overridesByDate[dateStr] || [];
-  return overrides.some((o) => o.type === 'cancelled' && String(o.customerMobile).trim() === mobile);
+  return overrides.some(
+    (o) =>
+      o.type === 'cancelled' &&
+      String(o.customerMobile).trim() === mobile &&
+      (overrideShiftKey(o) === 'both' || overrideShiftKey(o) === shift)
+  );
 }
 
-/** Scheduled delivery day marked as no delivery (cancel override). */
-function isBuyerSkippedForDate(buyer, dateStr, overridesByDate) {
-  if (!isCancelledForBuyerDate(buyer, dateStr, overridesByDate)) return false;
+/** Scheduled day + this shift marked no delivery. */
+function isBuyerSkippedForShift(buyer, dateStr, shift, overridesByDate) {
+  if (!isCancelledForBuyerShift(buyer, dateStr, shift, overridesByDate)) return false;
   const dateStart = getStartOfDayISTFromString(dateStr);
   return isDeliveryDay(buyer, dateStart);
+}
+
+function haveDeliveryForShift(buyer, dateStr, shift, overridesByDate) {
+  if (!buyerAllowsShift(buyer, shift)) return false;
+  const mobile = String(buyer.mobile || '').trim();
+  if (!mobile) return false;
+  const overrides = overridesByDate[dateStr] || [];
+  const added = overrides.some((o) => o.type === 'added' && String(o.customerMobile).trim() === mobile);
+  const dateStart = getStartOfDayISTFromString(dateStr);
+  const normallyOn = isDeliveryDay(buyer, dateStart);
+  const cancelled = isCancelledForBuyerShift(buyer, dateStr, shift, overridesByDate);
+  return (normallyOn && !cancelled) || added;
 }
 
 function isDeliveryDay(buyer, dateStartIST) {
@@ -394,17 +417,8 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     setCustomModal((m) => (m ? { ...m, dateStr: selectedDateYmd } : m));
   }, [selectedDateYmd]);
 
-  const haveDeliveryForCell = useCallback(
-    (buyer, dateStr) => {
-      const mobile = String(buyer.mobile || '').trim();
-      if (!mobile) return false;
-      const overrides = overridesByDate[dateStr] || [];
-      const cancelled = overrides.some((o) => o.type === 'cancelled' && String(o.customerMobile).trim() === mobile);
-      const added = overrides.some((o) => o.type === 'added' && String(o.customerMobile).trim() === mobile);
-      const dateStart = getStartOfDayISTFromString(dateStr);
-      const normallyOn = isDeliveryDay(buyer, dateStart);
-      return (normallyOn && !cancelled) || added;
-    },
+  const haveDeliveryForShiftCb = useCallback(
+    (buyer, ds, shift) => haveDeliveryForShift(buyer, ds, shift, overridesByDate),
     [overridesByDate]
   );
 
@@ -434,15 +448,15 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     const morning = {};
     const evening = {};
     for (const b of buyersSorted) {
-      if (!haveDeliveryForCell(b, dateStr)) continue;
-      if (buyerAllowsShift(b, 'morning')) {
+      if (!haveDeliveryForShiftCb(b, dateStr, 'morning') && !haveDeliveryForShiftCb(b, dateStr, 'evening')) continue;
+      if (buyerAllowsShift(b, 'morning') && haveDeliveryForShiftCb(b, dateStr, 'morning')) {
         const bySrc = plannedLitersBySourceForShift(b, 'morning');
         if (Object.keys(bySrc).length === 0) continue;
         for (const [src, q] of Object.entries(bySrc)) {
           morning[src] = (morning[src] || 0) + q;
         }
       }
-      if (buyerAllowsShift(b, 'evening')) {
+      if (buyerAllowsShift(b, 'evening') && haveDeliveryForShiftCb(b, dateStr, 'evening')) {
         const bySrc = plannedLitersBySourceForShift(b, 'evening');
         if (Object.keys(bySrc).length === 0) continue;
         for (const [src, q] of Object.entries(bySrc)) {
@@ -451,7 +465,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
       }
     }
     return { morning, evening };
-  }, [buyersSorted, dateStr, haveDeliveryForCell]);
+  }, [buyersSorted, dateStr, haveDeliveryForShiftCb]);
   const isViewingToday = selectedDateYmd === getTodayYmdIST();
 
   const handleDelivered = async (buyer, ds, shift) => {
@@ -670,35 +684,27 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     }
   };
 
-  const salesForBuyerDate = useCallback(
-    (mobile, ds) => {
-      const m = String(mobile).trim();
-      return transactions.filter(
-        (t) => t.type === 'sale' && String(t.buyerPhone || '').trim() === m && getYmdInIST(t.date) === ds
-      );
-    },
-    [transactions]
-  );
-
-  const handleSkipDelivery = (buyer, ds) => {
+  const handleSkipDelivery = (buyer, ds, shift) => {
+    if (!buyerAllowsShift(buyer, shift)) return;
     const mobile = String(buyer.mobile || '').trim();
     if (!mobile) return;
-    const txs = salesForBuyerDate(mobile, ds);
+    const txs = salesForBuyerDateShift(mobile, ds, shift);
     if (txs.length > 0) {
       Alert.alert(
         'Cannot skip',
-        `${buyer.name} already has milk recorded for this date. Delete sale(s) with Del first, then skip.`
+        `${buyer.name} already has ${shift === 'evening' ? 'evening' : 'morning'} milk on this date. Delete with Del first.`
       );
       return;
     }
-    Alert.alert('No delivery today?', `Mark ${buyer.name} as no delivery on ${ds}?`, [
+    const shiftLabel = shift === 'evening' ? 'Evening' : 'Morning';
+    Alert.alert('No delivery?', `Mark ${buyer.name} — ${shiftLabel} on ${ds} as no delivery?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'No delivery',
         onPress: async () => {
           try {
-            setActionLoading(`skip-${mobile}-${ds}`);
-            await deliveryOverrideService.setOverride(ds, mobile, 'cancelled');
+            setActionLoading(`skip-${mobile}-${ds}-${shift}`);
+            await deliveryOverrideService.setOverride(ds, mobile, 'cancelled', shift);
             await loadData(true);
           } catch (e) {
             Alert.alert('Error', e?.message || 'Could not skip delivery.');
@@ -710,17 +716,26 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
     ]);
   };
 
-  const handleUndoSkip = (buyer, ds) => {
+  const handleUndoSkip = (buyer, ds, shift) => {
+    if (!buyerAllowsShift(buyer, shift)) return;
     const mobile = String(buyer.mobile || '').trim();
     if (!mobile) return;
-    Alert.alert('Undo skip?', `Restore scheduled delivery for ${buyer.name} on ${ds}?`, [
+    const shiftLabel = shift === 'evening' ? 'Evening' : 'Morning';
+    const mobileNorm = mobile;
+    const cancelRows = (overridesByDate[ds] || []).filter(
+      (o) => o.type === 'cancelled' && String(o.customerMobile).trim() === mobileNorm
+    );
+    const forThisShift = cancelRows.find((o) => overrideShiftKey(o) === shift);
+    const wholeDay = cancelRows.find((o) => overrideShiftKey(o) === 'both');
+    const cancelShift = forThisShift ? shift : wholeDay ? 'both' : shift;
+    Alert.alert('Undo skip?', `Restore ${shiftLabel} delivery for ${buyer.name} on ${ds}?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Undo',
         onPress: async () => {
           try {
-            setActionLoading(`unskip-${mobile}-${ds}`);
-            await deliveryOverrideService.removeOverride(ds, mobile, 'cancelled');
+            setActionLoading(`unskip-${mobile}-${ds}-${shift}`);
+            await deliveryOverrideService.removeOverride(ds, mobile, 'cancelled', cancelShift);
             await loadData(true);
           } catch (e) {
             Alert.alert('Error', e?.message || 'Could not undo skip.');
@@ -776,7 +791,8 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
         </View>
       );
     }
-    const ok = haveDeliveryForCell(b, dateStr);
+    const skipped = isBuyerSkippedForShift(b, dateStr, shift, overridesByDate);
+    const ok = haveDeliveryForShift(b, dateStr, shift, overridesByDate);
     const txs = salesForBuyerDateShift(b.mobile, dateStr, shift);
     const delivered = txs.length > 0;
     const qtySum = txs.reduce((s, t) => s + (Number(t.quantity) || 0), 0);
@@ -795,6 +811,22 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
           .join(' · ')
       : '';
 
+    if (skipped) {
+      const busyUnskip = actionLoading === `unskip-${String(b.mobile).trim()}-${dateStr}-${shift}`;
+      return (
+        <View style={[styles.cell, styles.cellSkipped, { minHeight: ROW_MIN_H }]}>
+          <Text style={styles.cellSkippedLabel}>No delivery</Text>
+          <TouchableOpacity
+            style={styles.skipUndoBtn}
+            onPress={() => handleUndoSkip(b, dateStr, shift)}
+            disabled={busyUnskip || actionLoading !== null}
+          >
+            <Text style={styles.skipUndoBtnText}>{busyUnskip ? '...' : 'Undo'}</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
     if (!ok) {
       return (
         <View style={[styles.cell, styles.cellOff, { minHeight: ROW_MIN_H }]}>
@@ -805,9 +837,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
 
     if (!delivered) {
       const busyHere = actionLoading === `${String(b.mobile).trim()}-${dateStr}-${shift}`;
-      const busySkip = actionLoading === `skip-${String(b.mobile).trim()}-${dateStr}`;
-      const showSkipHere =
-        shift === 'morning' || !buyerAllowsShift(b, 'morning');
+      const busySkip = actionLoading === `skip-${String(b.mobile).trim()}-${dateStr}-${shift}`;
       return (
         <View style={[styles.cell, { minHeight: ROW_MIN_H }]}>
           <TouchableOpacity
@@ -828,17 +858,15 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
               Custom
             </Text>
           </TouchableOpacity>
-          {showSkipHere && (
-            <TouchableOpacity
-              style={[styles.miniBtn, styles.miniSkip]}
-              onPress={() => handleSkipDelivery(b, dateStr)}
-              disabled={busySkip || actionLoading !== null}
-            >
-              <Text style={styles.miniBtnTextSkip} numberOfLines={2}>
-                {busySkip ? '...' : 'No delivery'}
-              </Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={[styles.miniBtn, styles.miniSkip]}
+            onPress={() => handleSkipDelivery(b, dateStr, shift)}
+            disabled={busySkip || actionLoading !== null}
+          >
+            <Text style={styles.miniBtnTextSkip} numberOfLines={2}>
+              {busySkip ? '...' : 'No delivery'}
+            </Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -923,10 +951,7 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
               </View>
             </View>
           </View>
-          {buyersSorted.map((b) => {
-            const skippedToday = isBuyerSkippedForDate(b, dateStr, overridesByDate);
-            const busyUnskip = actionLoading === `unskip-${String(b.mobile).trim()}-${dateStr}`;
-            return (
+          {buyersSorted.map((b) => (
             <View key={b.mobile} style={styles.tableRow}>
               <View style={[styles.nameCell, { width: NAME_COL_W, minHeight: ROW_MIN_H }]}>
                 <View style={styles.nameCellTopRow}>
@@ -990,27 +1015,13 @@ export default function QuickSaleScreen({ onNavigate, onLogout }) {
                   </>
                 ) : null}
               </View>
-              {skippedToday ? (
-                <View style={[styles.cell, styles.cellSkipped, { flex: 1, minHeight: ROW_MIN_H }]}>
-                  <Text style={styles.cellSkippedLabel}>No delivery today</Text>
-                  <TouchableOpacity
-                    style={styles.skipUndoBtn}
-                    onPress={() => handleUndoSkip(b, dateStr)}
-                    disabled={busyUnskip || actionLoading !== null}
-                  >
-                    <Text style={styles.skipUndoBtnText}>{busyUnskip ? '...' : 'Undo'}</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.cellWrapRow}>
-                  <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'morning')}</View>
-                  <View style={styles.cellWrapDivider} />
-                  <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'evening')}</View>
-                </View>
-              )}
+              <View style={styles.cellWrapRow}>
+                <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'morning')}</View>
+                <View style={styles.cellWrapDivider} />
+                <View style={styles.cellWrapHalf}>{renderShiftCell(b, 'evening')}</View>
+              </View>
             </View>
-            );
-          })}
+          ))}
         </ScrollView>
       )}
 

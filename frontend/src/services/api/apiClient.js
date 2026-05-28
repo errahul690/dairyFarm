@@ -174,7 +174,26 @@ async function request(method, endpoint, data) {
   }
 }
 
+async function uploadForm(endpoint, formData) {
+  if (!authToken) {
+    authToken = await getAuthToken();
+  }
+  const headers = { Accept: 'application/json' };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+  const url = `${API_BASE_URL}${endpoint}`;
+  const res = await fetch(url, { method: 'POST', headers, body: formData });
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    throw new Error(json?.error || json?.message || 'Upload failed');
+  }
+  return json;
+}
+
 export const apiClient = {
+  uploadForm,
   get: async (endpoint) => {
     return request('GET', endpoint);
   },

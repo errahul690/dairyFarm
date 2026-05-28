@@ -137,7 +137,16 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
   );
 
   const cancelledMobiles = useMemo(
-    () => new Set(overrides.filter((o) => o.type === 'cancelled').map((o) => String(o.customerMobile).trim())),
+    () =>
+      new Set(
+        overrides
+          .filter((o) => {
+            if (o.type !== 'cancelled') return false;
+            const s = o.deliveryShift;
+            return !s || s === 'both';
+          })
+          .map((o) => String(o.customerMobile).trim())
+      ),
     [overrides]
   );
   const addedMobiles = useMemo(
@@ -186,7 +195,9 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
       .map((b) => {
         const mobile = String(b.mobile).trim();
         const normallyOn = isDeliveryDay(b, dateStart);
-        const cancelled = cancelledMobiles.has(mobile);
+        const cancelled =
+          cancelledMobiles.has(mobile) ||
+          overrides.some((o) => o.type === 'cancelled' && String(o.customerMobile).trim() === mobile);
         const hasDeliveryItems = Array.isArray(b.deliveryItems) && b.deliveryItems.length > 0;
         const dailyQuantity = hasDeliveryItems
           ? b.deliveryItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0)
@@ -204,7 +215,7 @@ export default function DeliveryScheduleScreen({ onNavigate, onLogout }) {
         };
       })
       .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'en'));
-  }, [buyers, buyersOnDate, dateStart, cancelledMobiles]);
+  }, [buyers, buyersOnDate, dateStart, cancelledMobiles, overrides]);
 
   const totalLiters = useMemo(
     () => buyersOnDate.reduce((s, b) => s + b.dailyQuantity, 0),

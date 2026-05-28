@@ -16,6 +16,12 @@ const DeliveryOverrideSchema = new mongoose.Schema({
     required: true,
     enum: ["cancelled", "added"],
   },
+  /** morning | evening = skip that shift only; both = whole day (default). */
+  deliveryShift: {
+    type: String,
+    enum: ["morning", "evening", "both"],
+    default: "both",
+  },
 }, {
   timestamps: { createdAt: "createdAt", updatedAt: "updatedAt" },
   toJSON: {
@@ -26,7 +32,7 @@ const DeliveryOverrideSchema = new mongoose.Schema({
   },
 });
 
-DeliveryOverrideSchema.index({ date: 1, customerMobile: 1, type: 1 }, { unique: true });
+DeliveryOverrideSchema.index({ date: 1, customerMobile: 1, type: 1, deliveryShift: 1 }, { unique: true });
 
 const DeliveryOverride = mongoose.model("DeliveryOverride", DeliveryOverrideSchema);
 
@@ -35,20 +41,33 @@ async function getOverridesForDate(dateStr) {
   return list;
 }
 
-async function setOverride(dateStr, customerMobile, type) {
+function normalizeDeliveryShift(deliveryShift) {
+  if (deliveryShift === "morning" || deliveryShift === "evening") return deliveryShift;
+  return "both";
+}
+
+async function setOverride(dateStr, customerMobile, type, deliveryShift) {
   const mobile = String(customerMobile).trim();
+  const shift = normalizeDeliveryShift(deliveryShift);
   const doc = await DeliveryOverride.findOneAndUpdate(
-    { date: dateStr, customerMobile: mobile, type },
-    { date: dateStr, customerMobile: mobile, type },
+    { date: dateStr, customerMobile: mobile, type, deliveryShift: shift },
+    { date: dateStr, customerMobile: mobile, type, deliveryShift: shift },
     { upsert: true, new: true }
   );
   return doc;
 }
 
-async function removeOverride(dateStr, customerMobile, type) {
+async function removeOverride(dateStr, customerMobile, type, deliveryShift) {
   const mobile = String(customerMobile).trim();
-  const result = await DeliveryOverride.deleteOne({ date: dateStr, customerMobile: mobile, type });
-  return result;
+  const shift = normalizeDeliveryShift(deliveryShift);
+  const base = { date: dateStr, customerMobile: mobile, type };
+  if (shift === "both") {
+    return await DeliveryOverride.deleteOne({
+      ...base,
+      $or: [{ deliveryShift: "both" }, { deliveryShift: { $exists: false } }, { deliveryShift: null }],
+    });
+  }
+  return await DeliveryOverride.deleteOne({ ...base, deliveryShift: shift });
 }
 
 async function deleteOverrideById(id) {

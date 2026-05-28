@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StatusBar, useColorScheme, ActivityIndicator, View, Text } from 'react-native';
+import { StatusBar, useColorScheme, ActivityIndicator, View, Text, Platform } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DashboardScreen from './src/pages/dashboard/DashboardScreen';
 import AnimalScreen from './src/pages/animals/AnimalScreen';
@@ -32,6 +32,9 @@ import SignupScreen from './src/pages/auth/SignupScreen';
 import ForgotPasswordScreen from './src/pages/auth/ForgotPasswordScreen';
 import { authService } from './src/services/auth/authService';
 import { setOnTokenExpired } from './src/services/api/apiClient';
+import AppUpdateModal from './src/components/AppUpdateModal';
+import { checkForUpdate } from './src/services/appRelease/appReleaseService';
+import { getInstalledVersionCode } from './src/utils/nativeAppVersion';
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -40,6 +43,8 @@ function App() {
   const [currentScreen, setCurrentScreen] = useState('Login/Signup');
   const [navParams, setNavParams] = useState({});
   const [isLoading, setIsLoading] = useState(true);
+  const [appUpdateInfo, setAppUpdateInfo] = useState(null);
+  const [showAppUpdate, setShowAppUpdate] = useState(false);
 
   const handleTokenExpired = async () => {
     console.log('[App] Token expired, redirecting to login');
@@ -88,6 +93,25 @@ function App() {
 
     checkAuth();
   }, []);
+
+  useEffect(() => {
+    if (isLoading || Platform.OS !== 'android') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const code = getInstalledVersionCode();
+        const result = await checkForUpdate(code);
+        if (cancelled || !result?.updateAvailable || !result?.latest) return;
+        setAppUpdateInfo(result);
+        setShowAppUpdate(true);
+      } catch (e) {
+        console.warn('[App] Update check failed:', e?.message || e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading]);
 
   const navigateToScreen = (screen, params) => {
     // Protected screens - only accessible after login
@@ -264,6 +288,11 @@ function App() {
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       <ScreenWithSafePadding>{renderScreen()}</ScreenWithSafePadding>
+      <AppUpdateModal
+        visible={showAppUpdate}
+        updateInfo={appUpdateInfo}
+        onLater={() => setShowAppUpdate(false)}
+      />
     </SafeAreaProvider>
   );
 }
