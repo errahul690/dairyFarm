@@ -32,7 +32,3 @@ Thumbs.db
 /src/db/db.js
 ./node_modules
 ./env
-
-# Published APK files (metadata is in DB)
-uploads/apk/*
-!uploads/apk/.gitkeep

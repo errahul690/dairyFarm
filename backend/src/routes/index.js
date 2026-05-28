@@ -13,7 +13,6 @@ const { router: notificationsRouter } = require("./notifications");
 const { router: deliveryOverrideRouter } = require("./deliveryOverride");
 const { router: settingsRouter } = require("./settings");
 const { router: billsRouter } = require("./bills");
-const { router: appReleaseRouter } = require("./appRelease");
 
 const appRouter = Router();
 
@@ -31,7 +30,6 @@ appRouter.use("/notifications", notificationsRouter);
 appRouter.use("/delivery-overrides", deliveryOverrideRouter);
 appRouter.use("/settings", settingsRouter);
 appRouter.use("/bills", billsRouter);
-appRouter.use("/app-release", appReleaseRouter);
 
 function registerRoutes(app) {
   app.use(appRouter);
