@@ -25,12 +25,12 @@ import { authService } from '../../services/auth/authService';
 import { MILK_SOURCE_TYPES } from '../../constants';
 
 export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, onConsumedFocusParam, openEditOnFocus = false }) {
-  const [transactions, setTransactions] = useState([]);
-  const [payments, setPayments] = useState([]);
   const [buyersData, setBuyersData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedBuyer, setSelectedBuyer] = useState(null);
   const [monthTabByBuyer, setMonthTabByBuyer] = useState({}); // { [mobile]: 'YYYY-MM' }
+  const [buyerLedgerById, setBuyerLedgerById] = useState({}); // { [buyerId]: month ledger from API }
+  const [buyerLedgerLoading, setBuyerLedgerLoading] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [editingBuyer, setEditingBuyer] = useState(null);
@@ -164,6 +164,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       setShowAddMilkModal(false);
       setAddMilkBuyer(null);
       await loadData(true);
+      await refreshExpandedBuyerLedger();
       Alert.alert('Success', 'Milk transaction added.');
     } catch (e) {
       Alert.alert('Error', e?.message || 'Failed to add transaction.');
@@ -204,6 +205,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       setShowAddPaymentModal(false);
       setAddPaymentBuyer(null);
       await loadData(true);
+      await refreshExpandedBuyerLedger();
       Alert.alert('Success', 'Payment recorded.');
     } catch (e) {
       Alert.alert('Error', e?.message || 'Failed to add payment.');
@@ -270,6 +272,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       });
       setEditMilkTx(null);
       await loadData(true);
+      await refreshExpandedBuyerLedger();
       Alert.alert('Success', 'Milk transaction updated.');
     } catch (e) {
       Alert.alert('Error', e?.message || 'Update failed.');
@@ -288,6 +291,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
           try {
             await milkService.deleteTransaction(tx._id);
             await loadData(true);
+            await refreshExpandedBuyerLedger();
           } catch (e) {
             Alert.alert('Error', e?.message || 'Delete failed.');
           }
@@ -327,6 +331,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       });
       setEditPaymentTx(null);
       await loadData(true);
+      await refreshExpandedBuyerLedger();
       Alert.alert('Success', 'Payment updated.');
     } catch (e) {
       Alert.alert('Error', e?.message || 'Update failed.');
@@ -345,6 +350,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
           try {
             await paymentService.deletePayment(pay._id);
             await loadData(true);
+            await refreshExpandedBuyerLedger();
           } catch (e) {
             Alert.alert('Error', e?.message || 'Delete failed.');
           }
@@ -398,32 +404,55 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     return () => clearTimeout(t);
   }, [pendingScrollToMobile, tryScrollToBuyer]);
 
+  const loadBuyerLedger = useCallback(async (buyer, monthKey) => {
+    const id = buyer?._id != null ? String(buyer._id) : '';
+    const mk = String(monthKey || '').trim();
+    if (!id || !mk) return null;
+    setBuyerLedgerLoading(id);
+    try {
+      const ledger = await buyerService.getBuyerMonthLedger(buyer._id, mk);
+      if (ledger) {
+        setBuyerLedgerById((prev) => ({ ...prev, [id]: ledger }));
+        return ledger;
+      }
+      return null;
+    } catch (e) {
+      console.error('[BuyerScreen] loadBuyerLedger failed', e);
+      return null;
+    } finally {
+      setBuyerLedgerLoading((cur) => (cur === id ? null : cur));
+    }
+  }, []);
+
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [buyersList, balances, paymentData, txData] = await Promise.all([
+      const [buyersList, balances] = await Promise.all([
         buyerService.getBuyers().catch(() => []),
         buyerService.getBuyerBalances(false).catch(() => []),
-        paymentService.getPayments().catch(() => []),
-        // Keep existing transactions load for now (used for detailed lists); will be replaced by per-buyer month fetch next.
-        milkService.getTransactions(null, null, 5000, 0, 'sale').catch(() => []),
       ]);
-      setTransactions(Array.isArray(txData) ? txData : []);
-      setBuyersData(Array.isArray(buyersList) ? buyersList : []);
-      setPayments(Array.isArray(paymentData) ? paymentData : []);
-      // Merge stored balances into buyersData by mobile for list display.
+      const list = Array.isArray(buyersList) ? buyersList : [];
       const balMap = {};
       (Array.isArray(balances) ? balances : []).forEach((b) => {
         const m = String(b.buyerMobile || '').trim();
         if (!m) return;
-        balMap[m] = Number(b.pendingAmount) || 0;
+        balMap[m] = {
+          pendingAmount: Number(b.pendingAmount) || 0,
+          totalMilkAmount: Number(b.totalMilkAmount) || 0,
+          totalPaidAmount: Number(b.totalPaidAmount) || 0,
+        };
       });
-      setBuyersData((prev) =>
-        (Array.isArray(prev) ? prev : []).map((b) => {
+      setBuyersData(
+        list.map((b) => {
           const mobile = String(b.mobile || '').trim();
-          if (!mobile) return b;
-          if (balMap[mobile] == null) return b;
-          return { ...b, pendingBalance: balMap[mobile] };
+          const bal = balMap[mobile];
+          if (!bal) return b;
+          return {
+            ...b,
+            pendingBalance: bal.pendingAmount,
+            totalMilkAmount: bal.totalMilkAmount,
+            totalPaidAmount: bal.totalPaidAmount,
+          };
         })
       );
     } catch (error) {
@@ -434,103 +463,124 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     }
   };
 
-  // Get all buyers with their statistics
+  // Stored balance totals from backend — no heavy transaction scan.
   const buyers = useMemo(() => {
-    const buyerMap = new Map();
+    const buyerList = (buyersData || [])
+      .filter((buyer) => buyer.mobile)
+      .map((buyer) => ({
+        _id: buyer._id,
+        userId: buyer.userId,
+        name: buyer.name,
+        phone: buyer.mobile.trim(),
+        email: buyer.email || '',
+        totalAmount: Number(buyer.totalMilkAmount) || 0,
+        pendingBalance: Number(buyer.pendingBalance) || 0,
+        fixedPrice: buyer.rate,
+        dailyQuantity: buyer.quantity,
+        milkSource: buyer.milkSource || 'cow',
+        deliveryItems: Array.isArray(buyer.deliveryItems) ? buyer.deliveryItems : undefined,
+        active: buyer.active !== false,
+        isAlsoSeller: buyer.isAlsoSeller === true,
+        deliveryDays: buyer.deliveryDays,
+        deliveryCycleDays: buyer.deliveryCycleDays,
+        deliveryCycleStartDate: buyer.deliveryCycleStartDate,
+        billingMode: buyer.billingMode,
+        billingDayOfMonth: buyer.billingDayOfMonth,
+        lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
+        deliveryShift: buyer.deliveryShift || 'both',
+        morningDeliveryItems: buyer.morningDeliveryItems,
+        eveningDeliveryItems: buyer.eveningDeliveryItems,
+      }));
 
-    // Add buyers from buyers table
-    buyersData.forEach((buyer) => {
-      if (buyer.mobile) {
-        const key = buyer.mobile.trim();
-        buyerMap.set(key, {
-          _id: buyer._id,
-          userId: buyer.userId,
-          name: buyer.name,
-          phone: buyer.mobile,
-          email: buyer.email || '',
-          totalQuantity: 0,
-          totalAmount: 0,
-          transactionCount: 0,
-          fixedPrice: buyer.rate,
-          dailyQuantity: buyer.quantity,
-          milkSource: buyer.milkSource || 'cow',
-          deliveryItems: Array.isArray(buyer.deliveryItems) ? buyer.deliveryItems : undefined,
-          active: buyer.active !== false,
-          isAlsoSeller: buyer.isAlsoSeller === true,
-          deliveryDays: buyer.deliveryDays,
-          deliveryCycleDays: buyer.deliveryCycleDays,
-          deliveryCycleStartDate: buyer.deliveryCycleStartDate,
-          billingMode: buyer.billingMode,
-          billingDayOfMonth: buyer.billingDayOfMonth,
-          lastBillingPeriodEnd: buyer.lastBillingPeriodEnd,
-          pendingBalanceFromApi: buyer.pendingBalance != null ? Number(buyer.pendingBalance) : null,
-          deliveryShift: buyer.deliveryShift || 'both',
-          morningDeliveryItems: buyer.morningDeliveryItems,
-          eveningDeliveryItems: buyer.eveningDeliveryItems,
-        });
-      }
-    });
-
-    // Process transactions and calculate statistics
-    transactions.forEach((tx) => {
-      if (tx.type === 'sale' && tx.buyerPhone) {
-        const key = tx.buyerPhone.trim();
-        const buyer = buyerMap.get(key);
-        
-        if (buyer) {
-          buyer.totalQuantity += tx.quantity;
-          buyer.totalAmount += tx.totalAmount;
-          buyer.transactionCount += 1;
-
-          const txDate = new Date(tx.date);
-          if (!buyer.lastTransactionDate || txDate > buyer.lastTransactionDate) {
-            buyer.lastTransactionDate = txDate;
-          }
-
-          buyerMap.set(key, buyer);
-        }
-      }
-    });
-
-    // Pending balance = milk total - payments received from this buyer
-    const buyerList = Array.from(buyerMap.values());
-    buyerList.forEach((buyer) => {
-      const phone = (buyer.phone || '').trim();
-      const totalPaid = (payments || [])
-        .filter((p) => String(p.customerMobile || '').trim() === phone)
-        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-      buyer.pendingBalance = buyer.pendingBalanceFromApi != null
-        ? buyer.pendingBalanceFromApi
-        : (buyer.totalAmount || 0) - totalPaid;
-    });
-
-    // Sort A-Z by name for easy finding
     return buyerList.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'en'));
-  }, [transactions, buyersData, payments]);
+  }, [buyersData]);
 
   const filteredBuyers = useMemo(
     () => buyers.filter((b) => (buyerFilterTab === 'active' ? b.active : !b.active)),
     [buyers, buyerFilterTab]
   );
 
-  const getBuyerTransactions = (phone) => {
-    return transactions
-      .filter((tx) => tx.type === 'sale' && tx.buyerPhone?.trim() === phone.trim())
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  };
+  const refreshExpandedBuyerLedger = useCallback(async () => {
+    if (!selectedBuyer) return;
+    const buyer = buyers.find((b) => String(b.phone).trim() === String(selectedBuyer).trim());
+    if (!buyer?._id) return;
+    const mk = monthTabByBuyer[buyer.phone] || monthKeyFromDate(new Date());
+    await loadBuyerLedger(buyer, mk);
+  }, [selectedBuyer, buyers, monthTabByBuyer, loadBuyerLedger]);
 
-  /** Payments for this buyer from Payments schema (all payment types). */
-  const getBuyerPaymentTransactions = (phone) => {
-    const p = String(phone || '').trim();
-    return (payments || [])
-      .filter((pay) => {
-        if (String(pay.customerMobile || '').trim() !== p) return false;
-        if (pay.isSettlement) return false;
-        if (pay.paymentDirection === 'to_seller') return false;
-        return true;
-      })
-      .sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime());
-  };
+  const fifoFromSummaries = useCallback((summaries) => {
+    const chrono = (Array.isArray(summaries) ? summaries : [])
+      .slice()
+      .sort((a, b) => String(a.monthKey).localeCompare(String(b.monthKey)));
+    if (chrono.length === 0) return { fifoRemainingByMonth: {}, fifoAllocLog: [] };
+
+    const buckets = [];
+    const first = chrono[0];
+    const openingCarry = Math.max(0, Number(first?.openingBalance) || 0);
+    if (openingCarry > 0) {
+      buckets.push({
+        monthKey: first.monthKey,
+        kind: 'carry',
+        label: `${monthLabel(first.monthKey)} · prior due`,
+        remaining: openingCarry,
+      });
+    }
+    chrono.forEach((m) => {
+      buckets.push({
+        monthKey: m.monthKey,
+        kind: 'milk',
+        label: `${monthLabel(m.monthKey)} · milk`,
+        remaining: Math.max(0, Number(m.milkIn) || 0),
+      });
+    });
+
+    const paySorted = chrono
+      .map((m) => ({
+        monthKey: m.monthKey,
+        amount: Math.max(0, Number(m.paymentsOut) || 0),
+      }))
+      .filter((p) => p.amount > 0);
+
+    let bi = 0;
+    const fifoAllocLog = [];
+    paySorted.forEach((p) => {
+      let left = p.amount;
+      const allocations = [];
+      while (left > 0.000001 && bi < buckets.length) {
+        if (buckets[bi].remaining <= 0.000001) {
+          bi += 1;
+          continue;
+        }
+        const take = Math.min(left, buckets[bi].remaining);
+        buckets[bi].remaining -= take;
+        left -= take;
+        allocations.push({
+          label: buckets[bi].label,
+          monthKey: buckets[bi].monthKey,
+          kind: buckets[bi].kind,
+          amount: Math.round(take * 100) / 100,
+        });
+        if (buckets[bi].remaining <= 0.000001) bi += 1;
+      }
+      if (p.amount > 0) {
+        fifoAllocLog.push({
+          id: p.monthKey,
+          date: null,
+          total: p.amount,
+          allocations,
+          unallocated: Math.round(Math.max(0, left) * 100) / 100,
+          monthKey: p.monthKey,
+        });
+      }
+    });
+
+    const fifoRemainingByMonth = {};
+    buckets.forEach((b) => {
+      fifoRemainingByMonth[b.monthKey] =
+        (fifoRemainingByMonth[b.monthKey] || 0) + Math.round((b.remaining || 0) * 100) / 100;
+    });
+    return { fifoRemainingByMonth, fifoAllocLog };
+  }, []);
 
   const formatDate = (date) => {
     return new Date(date).toLocaleDateString('en-IN', {
@@ -752,9 +802,27 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                 </Text>
               </View>
             ) : filteredBuyers.map((buyer, index) => {
-              const buyerTransactions = getBuyerTransactions(buyer.phone);
-              const buyerPaymentTransactions = getBuyerPaymentTransactions(buyer.phone);
               const isExpanded = selectedBuyer === buyer.phone;
+              const ledger = buyerLedgerById[String(buyer._id)] || null;
+              const ledgerLoading = buyerLedgerLoading === String(buyer._id);
+              const phone = String(buyer.phone || '').trim();
+              const monthKeys = ledger?.monthKeys || [];
+              const selectedMonth = monthTabByBuyer[phone] || monthKeys[0] || monthKeyFromDate(new Date());
+              const summary = ledger?.summary || {};
+              const opening = Number(summary.openingBalance) || 0;
+              const inAmt = Number(summary.milkIn) || 0;
+              const outAmt = Number(summary.paymentsOut) || 0;
+              const closing = Number(summary.closingBalance) || 0;
+              const { fifoRemainingByMonth, fifoAllocLog } = fifoFromSummaries(ledger?.summaries || []);
+              const allMonthKeysAsc = (ledger?.summaries || [])
+                .map((s) => s.monthKey)
+                .filter(Boolean)
+                .sort((a, b) => String(a).localeCompare(String(b)));
+              const idxSel = allMonthKeysAsc.indexOf(selectedMonth);
+              const keysUpToFifo = idxSel >= 0 ? allMonthKeysAsc.slice(0, idxSel + 1) : [];
+              const fifoRemainingUpTo = keysUpToFifo.reduce((s, k) => s + (Number(fifoRemainingByMonth[k]) || 0), 0);
+              const fifoPaid = fifoRemainingUpTo <= 0.0001;
+              const monthEntries = ledger?.entries || [];
 
               return (
                 <View
@@ -774,14 +842,9 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                         setSelectedBuyer(null);
                       } else {
                         setSelectedBuyer(buyer.phone);
-                        // Default to most recent month with any entry (milk/payments).
-                        const combinedDates = [
-                          ...(buyerTransactions || []).map((t) => new Date(t.date)),
-                          ...(buyerPaymentTransactions || []).map((p) => (p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate))),
-                        ].filter((d) => d instanceof Date && !isNaN(d.getTime()));
-                        const latest = combinedDates.sort((a, b) => b.getTime() - a.getTime())[0];
-                        const mk = latest ? monthKeyFromDate(latest) : '';
-                        if (mk) setMonthTabByBuyer((m) => ({ ...m, [buyer.phone]: mk }));
+                        const mk = monthTabByBuyer[buyer.phone] || monthKeyFromDate(new Date());
+                        setMonthTabByBuyer((m) => ({ ...m, [buyer.phone]: mk }));
+                        loadBuyerLedger(buyer, mk);
                         if (canEditUsers && buyer._id) {
                           buyerService.getBillsForBuyer(buyer._id).then((list) => {
                             setBuyerBillsCache((c) => ({ ...c, [String(buyer._id)]: Array.isArray(list) ? list : [] }));
@@ -870,19 +933,8 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                           )}
                         </View>
                         <Text style={styles.buyerAmount}>{formatCurrency(buyer.totalAmount)}</Text>
-                        <Text style={styles.buyerQuantity}>{buyer.totalQuantity.toFixed(2)} L</Text>
                         <Text style={styles.expandIcon}>{isExpanded ? '▲' : '▼'}</Text>
                       </View>
-                    </View>
-                    <View style={styles.buyerStats}>
-                      <Text style={styles.statText}>
-                        {buyer.transactionCount} Transaction{buyer.transactionCount !== 1 ? 's' : ''}
-                      </Text>
-                      {buyer.lastTransactionDate && (
-                        <Text style={styles.statText}>
-                          Last: {formatDate(buyer.lastTransactionDate)}
-                        </Text>
-                      )}
                     </View>
                     <View style={styles.pendingRow}>
                       <Text style={styles.pendingLabel}>To collect: </Text>
@@ -950,309 +1002,176 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
 
                   {isExpanded && (
                     <View style={styles.transactionsContainer}>
-                      {(() => {
-                        const phone = String(buyer.phone || '').trim();
-                        const milkList = buyerTransactions || [];
-                        const payList = buyerPaymentTransactions || [];
+                      {ledgerLoading ? (
+                        <Text style={styles.loadingText}>Loading month data…</Text>
+                      ) : (
+                        <>
+                          {monthKeys.length > 0 && (
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthTabs} contentContainerStyle={styles.monthTabsContent}>
+                              {monthKeys.map((mk) => {
+                                const active = mk === selectedMonth;
+                                return (
+                                  <TouchableOpacity
+                                    key={mk}
+                                    style={[styles.monthTab, active && styles.monthTabActive]}
+                                    onPress={() => {
+                                      setMonthTabByBuyer((m) => ({ ...m, [phone]: mk }));
+                                      loadBuyerLedger(buyer, mk);
+                                    }}
+                                    activeOpacity={0.8}
+                                  >
+                                    <Text style={[styles.monthTabText, active && styles.monthTabTextActive]}>{monthLabel(mk)}</Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </ScrollView>
+                          )}
 
-                        const monthKeysSet = new Set();
-                        milkList.forEach((t) => monthKeysSet.add(monthKeyFromDate(t.date)));
-                        payList.forEach((p) => monthKeysSet.add(monthKeyFromDate(p.paymentDate)));
-                        const monthKeys = Array.from(monthKeysSet).filter(Boolean).sort((a, b) => b.localeCompare(a));
-
-                        const selectedMonth = monthTabByBuyer[phone] || monthKeys[0] || '';
-
-                        const allEntriesAsc = [
-                          ...milkList.map((t) => ({
-                            kind: 'milk',
-                            date: new Date(t.date),
-                            amount: Number(t.totalAmount) || 0,
-                            obj: t,
-                          })),
-                          ...payList.map((p) => ({
-                            kind: 'payment',
-                            date: p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate),
-                            amount: Number(p.amount) || 0,
-                            obj: p,
-                          })),
-                        ].filter((e) => e.date instanceof Date && !isNaN(e.date.getTime()))
-                          .sort((a, b) => a.date.getTime() - b.date.getTime());
-
-                        let opening = 0;
-                        if (selectedMonth) {
-                          allEntriesAsc.forEach((e) => {
-                            const ymd = getYmdInIST(e.date);
-                            if (ymd < `${selectedMonth}-01`) {
-                              opening += e.kind === 'milk' ? e.amount : -e.amount;
-                            }
-                          });
-                        }
-
-                        let inAmt = 0;
-                        let outAmt = 0;
-                        const monthEntries = selectedMonth
-                          ? allEntriesAsc.filter((e) => getYmdInIST(e.date).slice(0, 7) === selectedMonth)
-                          : allEntriesAsc;
-                        monthEntries.forEach((e) => {
-                          if (e.kind === 'milk') inAmt += e.amount;
-                          else outAmt += e.amount;
-                        });
-                        const closing = opening + inAmt - outAmt;
-
-                        // FIFO across months (same idea as buyer Monthly Bills): later payments clear oldest dues.
-                        const allMonthKeysAsc = Array.from(monthKeysSet)
-                          .filter(Boolean)
-                          .sort((a, b) => String(a).localeCompare(String(b)));
-                        const milkByMonth = {};
-                        milkList.forEach((t) => {
-                          const mk0 = monthKeyFromDate(t.date);
-                          if (!mk0) return;
-                          milkByMonth[mk0] = (milkByMonth[mk0] || 0) + (Number(t.totalAmount) || 0);
-                        });
-                        const firstMk = allMonthKeysAsc[0] || '';
-                        let openingCarry = 0;
-                        if (firstMk) {
-                          milkList.forEach((t) => {
-                            const mk0 = monthKeyFromDate(t.date);
-                            if (mk0 && mk0 < firstMk) openingCarry += Number(t.totalAmount) || 0;
-                          });
-                          payList.forEach((p) => {
-                            const dt = p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate);
-                            const mk0 = monthKeyFromDate(dt);
-                            if (mk0 && mk0 < firstMk) openingCarry -= Number(p.amount) || 0;
-                          });
-                        }
-                        openingCarry = Math.max(0, openingCarry);
-                        const fifoBuckets = [];
-                        if (openingCarry > 0 && firstMk) {
-                          fifoBuckets.push({
-                            monthKey: firstMk,
-                            kind: 'carry',
-                            label: `${monthLabel(firstMk)} · prior due`,
-                            remaining: openingCarry,
-                          });
-                        }
-                        allMonthKeysAsc.forEach((mk0) => {
-                          fifoBuckets.push({
-                            monthKey: mk0,
-                            kind: 'milk',
-                            label: `${monthLabel(mk0)} · milk`,
-                            remaining: Math.max(0, milkByMonth[mk0] || 0),
-                          });
-                        });
-
-                        const paySorted = (payList || [])
-                          .map((p) => ({
-                            id: p._id,
-                            date: p.paymentDate instanceof Date ? p.paymentDate : new Date(p.paymentDate),
-                            amount: Number(p.amount) || 0,
-                          }))
-                          .filter((p) => p.date instanceof Date && !isNaN(p.date.getTime()))
-                          .sort((a, b) => a.date.getTime() - b.date.getTime() || String(a.id || '').localeCompare(String(b.id || '')));
-
-                        let bi = 0;
-                        const fifoAllocLog = [];
-                        paySorted.forEach((p) => {
-                          if (!(p.amount > 0)) return;
-                          let left = p.amount;
-                          const allocations = [];
-                          while (left > 0.000001 && bi < fifoBuckets.length) {
-                            if (fifoBuckets[bi].remaining <= 0.000001) {
-                              bi += 1;
-                              continue;
-                            }
-                            const take = Math.min(left, fifoBuckets[bi].remaining);
-                            fifoBuckets[bi].remaining -= take;
-                            left -= take;
-                            allocations.push({
-                              label: fifoBuckets[bi].label,
-                              monthKey: fifoBuckets[bi].monthKey,
-                              kind: fifoBuckets[bi].kind,
-                              amount: Math.round(take * 100) / 100,
-                            });
-                            if (fifoBuckets[bi].remaining <= 0.000001) bi += 1;
-                          }
-                          fifoAllocLog.push({
-                            id: p.id,
-                            date: p.date,
-                            total: p.amount,
-                            allocations,
-                            unallocated: Math.round(Math.max(0, left) * 100) / 100,
-                          });
-                        });
-
-                        const fifoRemainingByMonth = {};
-                        fifoBuckets.forEach((b) => {
-                          fifoRemainingByMonth[b.monthKey] =
-                            (fifoRemainingByMonth[b.monthKey] || 0) + Math.round((b.remaining || 0) * 100) / 100;
-                        });
-                        const idxSel = allMonthKeysAsc.indexOf(selectedMonth);
-                        const keysUpToFifo = idxSel >= 0 ? allMonthKeysAsc.slice(0, idxSel + 1) : [];
-                        const fifoRemainingUpTo = keysUpToFifo.reduce((s, k) => s + (Number(fifoRemainingByMonth[k]) || 0), 0);
-                        const fifoPaid = fifoRemainingUpTo <= 0.0001;
-
-                        const monthEntriesDesc = [...monthEntries].sort((a, b) => b.date.getTime() - a.date.getTime());
-
-                        return (
-                          <>
-                            {monthKeys.length > 0 && (
-                              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthTabs} contentContainerStyle={styles.monthTabsContent}>
-                                {monthKeys.map((mk) => {
-                                  const active = mk === selectedMonth;
-                                  return (
-                                    <TouchableOpacity
-                                      key={mk}
-                                      style={[styles.monthTab, active && styles.monthTabActive]}
-                                      onPress={() => setMonthTabByBuyer((m) => ({ ...m, [phone]: mk }))}
-                                      activeOpacity={0.8}
-                                    >
-                                      <Text style={[styles.monthTabText, active && styles.monthTabTextActive]}>{monthLabel(mk)}</Text>
-                                    </TouchableOpacity>
-                                  );
-                                })}
-                              </ScrollView>
-                            )}
-
-                            <View style={styles.tallyCard}>
-                              <View style={styles.tallyRow}>
-                                <Text style={styles.tallyLabel}>Opening</Text>
-                                <Text style={styles.tallyValue}>{formatCurrency(opening)}</Text>
-                              </View>
-                              <View style={styles.tallyRow}>
-                                <Text style={styles.tallyLabel}>Milk (In)</Text>
-                                <Text style={[styles.tallyValue, styles.tallyIn]}>{formatCurrency(inAmt)}</Text>
-                              </View>
-                              <View style={styles.tallyRow}>
-                                <Text style={styles.tallyLabel}>Payments (Out)</Text>
-                                <Text style={[styles.tallyValue, styles.tallyOut]}>{formatCurrency(outAmt)}</Text>
-                              </View>
-                              <View style={[styles.tallyRow, styles.tallyRowLast]}>
-                                <Text style={styles.tallyLabelStrong}>Closing</Text>
-                                <Text style={[styles.tallyValueStrong, closing > 0 ? styles.tallyDue : styles.tallyClear]}>{formatCurrency(closing)}</Text>
-                              </View>
-                              {fifoAllocLog.length > 0 && (
-                                <View style={styles.fifoAllocWrap}>
-                                  <Text style={styles.fifoAllocHeading}>FIFO — payment adjustments (by date)</Text>
-                                  {fifoAllocLog.map((row, ri) => (
-                                    <View key={String(row.id || `pay-${ri}`)} style={styles.fifoAllocItem}>
-                                      <Text style={styles.fifoAllocItemTitle}>
-                                        {formatDate(row.date)} ({getYmdInIST(row.date)})
+                          <View style={styles.tallyCard}>
+                            <View style={styles.tallyRow}>
+                              <Text style={styles.tallyLabel}>Opening</Text>
+                              <Text style={styles.tallyValue}>{formatCurrency(opening)}</Text>
+                            </View>
+                            <View style={styles.tallyRow}>
+                              <Text style={styles.tallyLabel}>Milk (In)</Text>
+                              <Text style={[styles.tallyValue, styles.tallyIn]}>{formatCurrency(inAmt)}</Text>
+                            </View>
+                            <View style={styles.tallyRow}>
+                              <Text style={styles.tallyLabel}>Payments (Out)</Text>
+                              <Text style={[styles.tallyValue, styles.tallyOut]}>{formatCurrency(outAmt)}</Text>
+                            </View>
+                            <View style={[styles.tallyRow, styles.tallyRowLast]}>
+                              <Text style={styles.tallyLabelStrong}>Closing</Text>
+                              <Text style={[styles.tallyValueStrong, closing > 0 ? styles.tallyDue : styles.tallyClear]}>{formatCurrency(closing)}</Text>
+                            </View>
+                            {fifoAllocLog.length > 0 && (
+                              <View style={styles.fifoAllocWrap}>
+                                <Text style={styles.fifoAllocHeading}>FIFO — payment adjustments (by month)</Text>
+                                {fifoAllocLog.map((row, ri) => (
+                                  <View key={String(row.id || `pay-${ri}`)} style={styles.fifoAllocItem}>
+                                    <Text style={styles.fifoAllocItemTitle}>{monthLabel(row.monthKey)}</Text>
+                                    <Text style={styles.fifoAllocItemPay}>Payment {formatCurrency(row.total)}</Text>
+                                    {row.allocations.map((a, ai) => (
+                                      <Text key={`${String(row.id || ri)}-a-${ai}`} style={styles.fifoAllocAllocLine}>
+                                        → {a.label}: {formatCurrency(a.amount)}
                                       </Text>
-                                      <Text style={styles.fifoAllocItemPay}>Payment {formatCurrency(row.total)}</Text>
-                                      {row.allocations.map((a, ai) => (
-                                        <Text key={`${String(row.id || ri)}-a-${ai}`} style={styles.fifoAllocAllocLine}>
-                                          → {a.label}: {formatCurrency(a.amount)}
-                                        </Text>
-                                      ))}
-                                      {row.unallocated > 0.0001 ? (
-                                        <Text style={styles.fifoAllocUnalloc}>
-                                          Not applied to older dues (advance / overpay): {formatCurrency(row.unallocated)}
-                                        </Text>
-                                      ) : null}
-                                    </View>
-                                  ))}
-                                </View>
-                              )}
-                              <View style={styles.tallyRow}>
-                                <Text style={styles.tallyLabel}>FIFO (all months)</Text>
-                                <Text style={[styles.tallyValueStrong, fifoPaid ? styles.tallyClear : styles.tallyDue]}>
-                                  {fifoPaid ? 'Paid' : formatCurrency(fifoRemainingUpTo)}
-                                </Text>
+                                    ))}
+                                    {row.unallocated > 0.0001 ? (
+                                      <Text style={styles.fifoAllocUnalloc}>
+                                        Not applied to older dues (advance / overpay): {formatCurrency(row.unallocated)}
+                                      </Text>
+                                    ) : null}
+                                  </View>
+                                ))}
                               </View>
-                              <Text style={styles.fifoHint}>
-                                Closing = this month only. FIFO applies later payments to oldest dues (same as Monthly Bills).
+                            )}
+                            <View style={styles.tallyRow}>
+                              <Text style={styles.tallyLabel}>FIFO (all months)</Text>
+                              <Text style={[styles.tallyValueStrong, fifoPaid ? styles.tallyClear : styles.tallyDue]}>
+                                {fifoPaid ? 'Paid' : formatCurrency(fifoRemainingUpTo)}
                               </Text>
                             </View>
+                            <Text style={styles.fifoHint}>
+                              Opening/closing from server (all history). Only this month&apos;s entries are loaded below.
+                            </Text>
+                          </View>
 
-                            {canEditUsers && (
-                              <View style={styles.monthActionsRow}>
-                                <TouchableOpacity style={styles.addMilkTxButton} onPress={() => openAddMilkModal(buyer)} activeOpacity={0.7}>
-                                  <Text style={styles.addMilkTxButtonText}>+ Add Milk</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.addPayBtn} onPress={() => openAddPaymentModal(buyer)} activeOpacity={0.7}>
-                                  <Text style={styles.addPayBtnText}>+ Add Payment</Text>
-                                </TouchableOpacity>
-                              </View>
-                            )}
+                          {canEditUsers && (
+                            <View style={styles.monthActionsRow}>
+                              <TouchableOpacity style={styles.addMilkTxButton} onPress={() => openAddMilkModal(buyer)} activeOpacity={0.7}>
+                                <Text style={styles.addMilkTxButtonText}>+ Add Milk</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity style={styles.addPayBtn} onPress={() => openAddPaymentModal(buyer)} activeOpacity={0.7}>
+                                <Text style={styles.addPayBtnText}>+ Add Payment</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
 
-                            {monthEntriesDesc.length > 0 ? (
-                              monthEntriesDesc.map((e, idx) => {
-                                if (e.kind === 'milk') {
-                                  const tx = e.obj;
-                                  return (
-                                    <View key={tx._id || `m-${idx}`} style={[styles.transactionItem, styles.txMilkCard]}>
-                                      <View style={styles.tallyEntryTop}>
-                                        <View style={styles.tallyEntryLeft}>
-                                          <View style={[styles.tallyBadge, styles.tallyBadgeMilk]}>
-                                            <Text style={styles.tallyBadgeText}>Milk</Text>
-                                          </View>
-                                          <Text style={styles.tallyEntryDate}>{formatDate(new Date(tx.date))}</Text>
-                                        </View>
-                                        <View style={styles.tallyEntryRight}>
-                                          <Text style={styles.tallyEntryLabel}>Debit</Text>
-                                          <Text style={[styles.tallyEntryAmount, styles.tallyEntryDebit]}>
-                                            {formatCurrency(tx.totalAmount)}
-                                          </Text>
-                                        </View>
-                                      </View>
-                                      <Text style={styles.tallyEntryDetails}>
-                                        {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource || 'Cow'} ·{' '}
-                                        {Number(tx.quantity || 0).toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
-                                      </Text>
-                                      {tx.notes && <Text style={styles.transactionNotes}>{tx.notes}</Text>}
-                                      {canEditUsers && (
-                                        <View style={styles.txActionRow}>
-                                          <TouchableOpacity onPress={() => openEditMilkModal(buyer, tx)} style={styles.txActionBtn}>
-                                            <Text style={styles.txActionEdit}>Edit</Text>
-                                          </TouchableOpacity>
-                                          <TouchableOpacity onPress={() => confirmDeleteMilkTx(buyer, tx)} style={styles.txActionBtn}>
-                                            <Text style={styles.txActionDel}>Delete</Text>
-                                          </TouchableOpacity>
-                                        </View>
-                                      )}
-                                    </View>
-                                  );
-                                }
-                                const pay = e.obj;
+                          {monthEntries.length > 0 ? (
+                            monthEntries.map((e, idx) => {
+                              if (e.kind === 'milk') {
+                                const tx = {
+                                  ...e,
+                                  totalAmount: Number(e.amount) || 0,
+                                  date: e.date,
+                                };
                                 return (
-                                  <View key={pay._id || `p-${idx}`} style={[styles.transactionItem, styles.txPaymentCard]}>
+                                  <View key={tx._id || `m-${idx}`} style={[styles.transactionItem, styles.txMilkCard]}>
                                     <View style={styles.tallyEntryTop}>
                                       <View style={styles.tallyEntryLeft}>
-                                        <View style={[styles.tallyBadge, styles.tallyBadgePayment]}>
-                                          <Text style={styles.tallyBadgeText}>Pay</Text>
+                                        <View style={[styles.tallyBadge, styles.tallyBadgeMilk]}>
+                                          <Text style={styles.tallyBadgeText}>Milk</Text>
                                         </View>
-                                        <Text style={styles.tallyEntryDate}>{formatDate(pay.paymentDate)}</Text>
+                                        <Text style={styles.tallyEntryDate}>{formatDate(new Date(tx.date))}</Text>
                                       </View>
                                       <View style={styles.tallyEntryRight}>
-                                        <Text style={styles.tallyEntryLabel}>Credit</Text>
-                                        <Text style={[styles.tallyEntryAmount, styles.tallyEntryCredit]}>
-                                          {formatCurrency(pay.amount)}
+                                        <Text style={styles.tallyEntryLabel}>Debit</Text>
+                                        <Text style={[styles.tallyEntryAmount, styles.tallyEntryDebit]}>
+                                          {formatCurrency(tx.totalAmount)}
                                         </Text>
                                       </View>
                                     </View>
                                     <Text style={styles.tallyEntryDetails}>
-                                      {[pay.paymentType, pay.paymentDirection].filter(Boolean).join(' · ') || 'Payment'}
+                                      {MILK_SOURCE_TYPES.find((s) => s.value === (tx.milkSource || 'cow'))?.label || tx.milkSource || 'Cow'} ·{' '}
+                                      {Number(tx.quantity || 0).toFixed(2)} L @ {formatCurrency(tx.pricePerLiter)}/L
                                     </Text>
-                                    {pay.notes ? <Text style={styles.transactionNotes}>{pay.notes}</Text> : null}
+                                    {tx.notes && <Text style={styles.transactionNotes}>{tx.notes}</Text>}
                                     {canEditUsers && (
                                       <View style={styles.txActionRow}>
-                                        <TouchableOpacity onPress={() => openEditPaymentModal(buyer, pay)} style={styles.txActionBtn}>
+                                        <TouchableOpacity onPress={() => openEditMilkModal(buyer, tx)} style={styles.txActionBtn}>
                                           <Text style={styles.txActionEdit}>Edit</Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity onPress={() => confirmDeletePayment(pay)} style={styles.txActionBtn}>
+                                        <TouchableOpacity onPress={() => confirmDeleteMilkTx(buyer, tx)} style={styles.txActionBtn}>
                                           <Text style={styles.txActionDel}>Delete</Text>
                                         </TouchableOpacity>
                                       </View>
                                     )}
                                   </View>
                                 );
-                              })
-                            ) : (
-                              <Text style={styles.noLogsText}>No entries in this month.</Text>
-                            )}
-                          </>
-                        );
-                      })()}
+                              }
+                              const pay = {
+                                ...e,
+                                paymentDate: e.date,
+                                amount: Number(e.amount) || 0,
+                              };
+                              return (
+                                <View key={pay._id || `p-${idx}`} style={[styles.transactionItem, styles.txPaymentCard]}>
+                                  <View style={styles.tallyEntryTop}>
+                                    <View style={styles.tallyEntryLeft}>
+                                      <View style={[styles.tallyBadge, styles.tallyBadgePayment]}>
+                                        <Text style={styles.tallyBadgeText}>Pay</Text>
+                                      </View>
+                                      <Text style={styles.tallyEntryDate}>{formatDate(pay.paymentDate)}</Text>
+                                    </View>
+                                    <View style={styles.tallyEntryRight}>
+                                      <Text style={styles.tallyEntryLabel}>Credit</Text>
+                                      <Text style={[styles.tallyEntryAmount, styles.tallyEntryCredit]}>
+                                        {formatCurrency(pay.amount)}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                  <Text style={styles.tallyEntryDetails}>
+                                    {[pay.paymentType, pay.paymentDirection].filter(Boolean).join(' · ') || 'Payment'}
+                                  </Text>
+                                  {pay.notes ? <Text style={styles.transactionNotes}>{pay.notes}</Text> : null}
+                                  {canEditUsers && (
+                                    <View style={styles.txActionRow}>
+                                      <TouchableOpacity onPress={() => openEditPaymentModal(buyer, pay)} style={styles.txActionBtn}>
+                                        <Text style={styles.txActionEdit}>Edit</Text>
+                                      </TouchableOpacity>
+                                      <TouchableOpacity onPress={() => confirmDeletePayment(pay)} style={styles.txActionBtn}>
+                                        <Text style={styles.txActionDel}>Delete</Text>
+                                      </TouchableOpacity>
+                                    </View>
+                                  )}
+                                </View>
+                              );
+                            })
+                          ) : (
+                            <Text style={styles.noLogsText}>No entries in this month.</Text>
+                          )}
+                        </>
+                      )}
 
                       {canEditUsers && (buyer.billingMode === 'daily' || buyer.billingMode === 'month_end' || buyer.billingMode === 'custom' || (buyer.billingDayOfMonth != null && !buyer.billingMode)) && (
                         <View style={styles.billsSection}>

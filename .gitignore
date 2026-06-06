@@ -10,3 +10,6 @@ ROLE_USAGE_GUIDE.md
 /frontend/start-emulator-timeout-fix.ps1
 ./node_modules
 /node_modules
+
+# Android release signing
+*.jks

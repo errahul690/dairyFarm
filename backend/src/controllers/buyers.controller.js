@@ -3,7 +3,11 @@ const { findSellerByUserId, getSellerById } = require("../models/sellers");
 const { User } = require("../models/users");
 const { getBuyerBalanceByBuyerId, listBuyerBalances } = require("../models/buyerBalances");
 const { listMonthlySummariesForBuyer, listMonthlySummariesByMonthKey } = require("../models/buyerMonthlySummaries");
-const { rebuildBuyerBalanceAndMonthly } = require("../services/buyerBalance.service");
+const {
+  rebuildBuyerBalanceAndMonthly,
+  ensureMonthlySummariesForMonth,
+  getBuyerMonthLedger,
+} = require("../services/buyerBalance.service");
 
 /**
  * Get all buyers with user details
@@ -167,6 +171,10 @@ const listBuyerMonthlySummariesByMonthKeyController = async (req, res) => {
     if (activeOnly) {
       const buyers = await getAllBuyers({ active: true });
       buyerIds = (buyers || []).map((b) => b._id);
+    }
+
+    if (Array.isArray(buyerIds) && buyerIds.length > 0) {
+      await ensureMonthlySummariesForMonth(monthKey, buyerIds);
     }
 
     let list = await listMonthlySummariesByMonthKey(monthKey, buyerIds, limit);
@@ -443,8 +451,12 @@ const getBuyerMonthlySummariesController = async (req, res) => {
     const limit = Math.min(120, Math.max(1, parseInt(String(req.query.limit || "24"), 10) || 24));
     const buyer = await getBuyerById(id);
     if (!buyer) return res.status(404).json({ error: "Buyer not found" });
-    const list = await listMonthlySummariesForBuyer(buyer._id, limit);
-    return res.json(list);
+    let list = await listMonthlySummariesForBuyer(buyer._id, limit);
+    if (!Array.isArray(list) || list.length === 0) {
+      await rebuildBuyerBalanceAndMonthly(buyer._id);
+      list = await listMonthlySummariesForBuyer(buyer._id, limit);
+    }
+    return res.json(Array.isArray(list) ? list : []);
   } catch (error) {
     console.error("[buyers] getBuyerMonthlySummaries:", error);
     return res.status(500).json({ error: "Failed to fetch buyer monthly summaries", message: error.message });
@@ -468,6 +480,28 @@ const rebuildBuyerBalanceController = async (req, res) => {
   }
 };
 
+/**
+ * Admin: month ledger — stored summary + entries for one month (lightweight).
+ * GET /buyers/:id/month-ledger?monthKey=YYYY-MM
+ */
+const getBuyerMonthLedgerController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const monthKey = String(req.query.monthKey || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ error: "monthKey is required (YYYY-MM)" });
+    }
+    const buyer = await getBuyerById(id);
+    if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+    const ledger = await getBuyerMonthLedger(buyer._id, monthKey);
+    if (!ledger) return res.status(404).json({ error: "Buyer not found" });
+    return res.json(ledger);
+  } catch (error) {
+    console.error("[buyers] getBuyerMonthLedger:", error);
+    return res.status(500).json({ error: "Failed to fetch month ledger", message: error.message });
+  }
+};
+
 module.exports = {
   listBuyers,
   getMyBuyerProfile,
@@ -480,5 +514,6 @@ module.exports = {
   getBuyerMonthlySummariesController,
   rebuildBuyerBalanceController,
   listBuyerMonthlySummariesByMonthKeyController,
+  getBuyerMonthLedgerController,
 };
 

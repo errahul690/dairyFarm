@@ -79,8 +79,10 @@ export default function BuyerMonthlySummaryScreen({ onNavigate, onLogout }) {
         return {
           mobile,
           name: b.name,
+          openingBalance: r ? Number(r.openingBalance) || 0 : 0,
           milkIn: r ? Number(r.milkIn) || 0 : 0,
           paymentsOut: r ? Number(r.paymentsOut) || 0 : 0,
+          closingBalance: r ? Number(r.closingBalance) || 0 : 0,
         };
       })
       .filter((x) => x.mobile);
@@ -95,9 +97,11 @@ export default function BuyerMonthlySummaryScreen({ onNavigate, onLogout }) {
   }, [rowsMerged, selectedBuyerMobile]);
 
   const totals = useMemo(() => {
+    const tOpen = visibleRows.reduce((s, r) => s + (Number(r.openingBalance) || 0), 0);
     const tMilk = visibleRows.reduce((s, r) => s + (Number(r.milkIn) || 0), 0);
     const tPay = visibleRows.reduce((s, r) => s + (Number(r.paymentsOut) || 0), 0);
-    return { tMilk, tPay };
+    const tClose = visibleRows.reduce((s, r) => s + (Number(r.closingBalance) || 0), 0);
+    return { tOpen, tMilk, tPay, tClose };
   }, [visibleRows]);
 
   const scrollToBuyer = (mobile) => {
@@ -164,12 +168,20 @@ export default function BuyerMonthlySummaryScreen({ onNavigate, onLogout }) {
         <View style={styles.right}>
           <View style={styles.summaryBar}>
             <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Opening</Text>
+              <Text style={styles.summaryValue}>{formatCurrency(totals.tOpen)}</Text>
+            </View>
+            <View style={styles.summaryItem}>
               <Text style={styles.summaryLabel}>Total Milk</Text>
               <Text style={styles.summaryValue}>{formatCurrency(totals.tMilk)}</Text>
             </View>
             <View style={styles.summaryItem}>
               <Text style={styles.summaryLabel}>Total Payments</Text>
               <Text style={styles.summaryValue}>{formatCurrency(totals.tPay)}</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Closing</Text>
+              <Text style={styles.summaryValue}>{formatCurrency(totals.tClose)}</Text>
             </View>
           </View>
 
@@ -203,12 +215,22 @@ export default function BuyerMonthlySummaryScreen({ onNavigate, onLogout }) {
                     </View>
                     <View style={styles.rowNumbers}>
                       <View style={styles.numBox}>
+                        <Text style={styles.numLabel}>Opening</Text>
+                        <Text style={[styles.numValue, styles.numNeutral]}>{formatCurrency(r.openingBalance)}</Text>
+                      </View>
+                      <View style={styles.numBox}>
                         <Text style={styles.numLabel}>Milk sale</Text>
                         <Text style={[styles.numValue, styles.numDebit]}>{formatCurrency(r.milkIn)}</Text>
                       </View>
                       <View style={styles.numBox}>
                         <Text style={styles.numLabel}>Payment received</Text>
                         <Text style={[styles.numValue, styles.numCredit]}>{formatCurrency(r.paymentsOut)}</Text>
+                      </View>
+                      <View style={styles.numBox}>
+                        <Text style={styles.numLabel}>Closing</Text>
+                        <Text style={[styles.numValue, r.closingBalance > 0 ? styles.numDebit : styles.numCredit]}>
+                          {formatCurrency(r.closingBalance)}
+                        </Text>
                       </View>
                     </View>
                   </View>
@@ -239,8 +261,8 @@ const styles = StyleSheet.create({
   leftBuyerNameOn: { color: '#1b5e20' },
   leftBuyerMobile: { marginTop: 2, fontSize: 11, color: '#777' },
   right: { flex: 1 },
-  summaryBar: { flexDirection: 'row', gap: 10, padding: 12 },
-  summaryItem: { flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 12, elevation: 2, shadowOpacity: 0.08, shadowRadius: 3 },
+  summaryBar: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, padding: 12 },
+  summaryItem: { flexGrow: 1, flexBasis: '45%', backgroundColor: '#fff', borderRadius: 12, padding: 12, elevation: 2, shadowOpacity: 0.08, shadowRadius: 3 },
   summaryLabel: { fontSize: 12, color: '#666', fontWeight: '700' },
   summaryValue: { marginTop: 6, fontSize: 16, fontWeight: '900', color: '#333' },
   rightList: { paddingHorizontal: 12, paddingBottom: 16 },
@@ -250,11 +272,12 @@ const styles = StyleSheet.create({
   rowName: { fontSize: 14, fontWeight: '900', color: '#333' },
   rowMobile: { marginTop: 2, fontSize: 11, color: '#777' },
   openBuyerLink: { color: '#1565C0', fontWeight: '900', marginLeft: 12 },
-  rowNumbers: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  numBox: { flex: 1, backgroundColor: '#fafafa', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#eee' },
+  rowNumbers: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
+  numBox: { flexGrow: 1, flexBasis: '45%', backgroundColor: '#fafafa', borderRadius: 10, padding: 10, borderWidth: 1, borderColor: '#eee' },
   numLabel: { fontSize: 11, color: '#666', fontWeight: '700' },
   numValue: { marginTop: 6, fontSize: 14, fontWeight: '900' },
   numDebit: { color: '#c62828' },
   numCredit: { color: '#2e7d32' },
+  numNeutral: { color: '#333' },
 });
 

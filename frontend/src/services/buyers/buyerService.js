@@ -91,6 +91,23 @@ export const buyerService = {
     return Array.isArray(response) ? response : [];
   },
 
+  /** Admin: month ledger — summary + entries for one month (backend-computed opening balance). */
+  getBuyerMonthLedger: async (buyerId, monthKey) => {
+    const id = typeof buyerId === 'string' ? buyerId : (buyerId?.toString?.() || buyerId);
+    const mk = String(monthKey || '').trim();
+    const response = await apiClient.get(
+      `/buyers/${id}/month-ledger?monthKey=${encodeURIComponent(mk)}`
+    );
+    if (!response || typeof response !== 'object') return null;
+    const entries = Array.isArray(response.entries)
+      ? response.entries.map((e) => ({
+          ...e,
+          date: e.date ? new Date(e.date) : new Date(),
+        }))
+      : [];
+    return { ...response, entries };
+  },
+
   /** Admin: stored month summaries for ALL buyers for a given monthKey (YYYY-MM). */
   getBuyerMonthlySummaryByMonthKey: async (monthKey, activeOnly = true, limit = 5000) => {
     const mk = String(monthKey || '').trim();
