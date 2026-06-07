@@ -13,6 +13,8 @@ const {
   rebuildBuyerBalanceController,
   listBuyerMonthlySummariesByMonthKeyController,
   getBuyerMonthLedgerController,
+  downloadBuyerMonthLedgerPdfController,
+  downloadBuyerMonthLedgerExcelController,
 } = require("../controllers/buyers.controller");
 
 const router = Router();
@@ -26,6 +28,8 @@ router.get("/me/monthly", requireAuth, getMyBuyerMonthlySummaries);
 router.patch("/me", requireAuth, updateMyBuyerProfile);
 router.post("/from-seller/:sellerId", requireAuth, createBuyerFromSeller);
 router.patch("/:id", requireAuth, updateBuyer);
+router.get("/:id/month-ledger/export/pdf", requireAuth, requireAdminOrSuperAdmin, downloadBuyerMonthLedgerPdfController);
+router.get("/:id/month-ledger/export/excel", requireAuth, requireAdminOrSuperAdmin, downloadBuyerMonthLedgerExcelController);
 router.get("/:id/month-ledger", requireAuth, requireAdminOrSuperAdmin, getBuyerMonthLedgerController);
 router.get("/:id/monthly", requireAuth, requireAdminOrSuperAdmin, getBuyerMonthlySummariesController);
 router.post("/:id/rebuild-balance", requireAuth, requireAdminOrSuperAdmin, rebuildBuyerBalanceController);

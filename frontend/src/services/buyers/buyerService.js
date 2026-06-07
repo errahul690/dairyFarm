@@ -3,7 +3,7 @@
  * Handle buyer operations
  */
 
-import { apiClient } from '../api/apiClient';
+import { apiClient, API_BASE_URL } from '../api/apiClient';
 
 export const buyerService = {
   /** Current user's buyer profile (for role 2). */
@@ -106,6 +106,18 @@ export const buyerService = {
         }))
       : [];
     return { ...response, entries };
+  },
+
+  getBuyerMonthLedgerPdfUrl: (buyerId, monthKey) => {
+    const id = typeof buyerId === 'string' ? buyerId : (buyerId?.toString?.() || buyerId);
+    const mk = encodeURIComponent(String(monthKey || '').trim());
+    return `${API_BASE_URL}/buyers/${id}/month-ledger/export/pdf?monthKey=${mk}`;
+  },
+
+  getBuyerMonthLedgerExcelUrl: (buyerId, monthKey) => {
+    const id = typeof buyerId === 'string' ? buyerId : (buyerId?.toString?.() || buyerId);
+    const mk = encodeURIComponent(String(monthKey || '').trim());
+    return `${API_BASE_URL}/buyers/${id}/month-ledger/export/excel?monthKey=${mk}`;
   },
 
   /** Admin: stored month summaries for ALL buyers for a given monthKey (YYYY-MM). */

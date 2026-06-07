@@ -9,9 +9,10 @@ import {
   Modal,
   Switch,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import HeaderWithMenu from '../../components/common/HeaderWithMenu';
-import BuyerEditModal from '../../components/buyers/BuyerEditModal';
+import BuyerEditModal, { MilkLinesBlock, defaultMilkLine } from '../../components/buyers/BuyerEditModal';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import { milkService } from '../../services/milk/milkService';
@@ -23,6 +24,30 @@ import { formatCurrency } from '../../utils/currencyUtils';
 import { getYmdInIST } from '../../utils/dateUtils';
 import { authService } from '../../services/auth/authService';
 import { MILK_SOURCE_TYPES } from '../../constants';
+import { downloadAndShareFile } from '../../utils/downloadFile';
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function emptyAddBuyerForm() {
+  return {
+    name: '',
+    mobile: '',
+    email: '',
+    milkFixedPrice: '',
+    dailyMilkQuantity: '',
+    milkSource: 'cow',
+    deliveryItems: [defaultMilkLine()],
+    morningDeliveryItems: [defaultMilkLine()],
+    eveningDeliveryItems: [defaultMilkLine()],
+    deliveryScheduleType: 'daily',
+    deliveryDays: [],
+    deliveryCycleDays: '2',
+    deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
+    billingMode: 'none',
+    billingDayOfMonth: '',
+    deliveryShift: 'both',
+  };
+}
 
 export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, onConsumedFocusParam, openEditOnFocus = false }) {
   const [buyersData, setBuyersData] = useState([]);
@@ -31,26 +56,12 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
   const [monthTabByBuyer, setMonthTabByBuyer] = useState({}); // { [mobile]: 'YYYY-MM' }
   const [buyerLedgerById, setBuyerLedgerById] = useState({}); // { [buyerId]: month ledger from API }
   const [buyerLedgerLoading, setBuyerLedgerLoading] = useState(null);
+  const [ledgerExportLoading, setLedgerExportLoading] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [editingBuyer, setEditingBuyer] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    mobile: '',
-    email: '',
-    milkFixedPrice: '',
-    dailyMilkQuantity: '',
-    milkSource: 'cow',
-    deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
-    deliveryScheduleType: 'daily',
-    deliveryDays: [],
-    deliveryCycleDays: '2',
-    deliveryCycleStartDate: '',
-    billingMode: 'none',
-    billingDayOfMonth: '',
-    deliveryShift: 'both',
-  });
+  const [formData, setFormData] = useState(emptyAddBuyerForm);
   const [showAddMilkModal, setShowAddMilkModal] = useState(false);
   const [addMilkBuyer, setAddMilkBuyer] = useState(null);
   const [addMilkLoading, setAddMilkLoading] = useState(false);
@@ -424,6 +435,38 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     }
   }, []);
 
+  const handleDownloadMonthLedger = useCallback(async (buyer, monthKey, format) => {
+    const id = buyer?._id != null ? String(buyer._id) : '';
+    const mk = String(monthKey || '').trim();
+    if (!id || !mk) return;
+    const loadKey = `${id}-${mk}-${format}`;
+    try {
+      setLedgerExportLoading(loadKey);
+      const safeName = String(buyer.name || 'buyer').replace(/\s+/g, '-').slice(0, 24);
+      if (format === 'pdf') {
+        await downloadAndShareFile({
+          url: buyerService.getBuyerMonthLedgerPdfUrl(buyer._id, mk),
+          filename: `buyer-ledger-${safeName}-${mk}.pdf`,
+          mimeType: 'application/pdf',
+          title: `Buyer Ledger ${monthLabel(mk)} (PDF)`,
+        });
+      } else {
+        await downloadAndShareFile({
+          url: buyerService.getBuyerMonthLedgerExcelUrl(buyer._id, mk),
+          filename: `buyer-ledger-${safeName}-${mk}.xlsx`,
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          title: `Buyer Ledger ${monthLabel(mk)} (Excel)`,
+        });
+      }
+    } catch (e) {
+      if (e?.message !== 'User did not share') {
+        Alert.alert('Error', e?.message || 'Download failed.');
+      }
+    } finally {
+      setLedgerExportLoading(null);
+    }
+  }, []);
+
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -590,11 +633,49 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
     });
   };
 
-  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
   const openEditForm = (buyer) => {
     setEditingBuyer(buyer);
     setShowEditForm(true);
+  };
+
+  const applyAddDeliveryShiftChange = (optId) => {
+    setFormData((fd) => {
+      if (optId === 'both') {
+        const rows =
+          fd.deliveryItems && fd.deliveryItems.length
+            ? fd.deliveryItems.map((x) => ({ ...x }))
+            : [defaultMilkLine()];
+        return {
+          ...fd,
+          deliveryShift: 'both',
+          morningDeliveryItems: rows.map((x) => ({ ...x })),
+          eveningDeliveryItems: rows.map((x) => ({ ...x })),
+        };
+      }
+      if (fd.deliveryShift === 'both') {
+        if (optId === 'morning') {
+          const rows =
+            fd.morningDeliveryItems && fd.morningDeliveryItems.length ? fd.morningDeliveryItems : fd.deliveryItems;
+          return {
+            ...fd,
+            deliveryShift: 'morning',
+            deliveryItems:
+              rows && rows.length ? rows.map((x) => ({ ...x })) : fd.deliveryItems || [defaultMilkLine()],
+          };
+        }
+        if (optId === 'evening') {
+          const rows =
+            fd.eveningDeliveryItems && fd.eveningDeliveryItems.length ? fd.eveningDeliveryItems : fd.deliveryItems;
+          return {
+            ...fd,
+            deliveryShift: 'evening',
+            deliveryItems:
+              rows && rows.length ? rows.map((x) => ({ ...x })) : fd.deliveryItems || [defaultMilkLine()],
+          };
+        }
+      }
+      return { ...fd, deliveryShift: optId };
+    });
   };
 
   const handleCreateBuyer = async () => {
@@ -623,18 +704,57 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       return;
     }
 
-    const builtItems = (formData.deliveryItems || [])
-      .map((it) => {
-        const q = parseFloat(it.quantity);
-        const r = parseFloat(it.rate);
-        if (!(q > 0 && r >= 0)) return null;
-        const src = (it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource)) ? it.milkSource : 'cow';
-        return { milkSource: src, quantity: q, rate: r };
-      })
-      .filter(Boolean);
-    if (builtItems.length === 0) {
-      Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
-      return;
+    const buildValidLines = (raw) =>
+      (raw || [])
+        .map((it) => {
+          const q = parseFloat(it.quantity);
+          const r = parseFloat(it.rate);
+          if (!(q > 0 && r >= 0)) return null;
+          const src = it.milkSource && ['cow', 'buffalo', 'sheep', 'goat'].includes(it.milkSource) ? it.milkSource : 'cow';
+          return { milkSource: src, quantity: q, rate: r };
+        })
+        .filter(Boolean);
+
+    const dupSource = (lines) => {
+      const seen = new Set();
+      for (const l of lines) {
+        if (seen.has(l.milkSource)) return l.milkSource;
+        seen.add(l.milkSource);
+      }
+      return null;
+    };
+
+    let builtItems;
+    let builtMorning;
+    let builtEvening;
+    if (formData.deliveryShift === 'both') {
+      builtMorning = buildValidLines(formData.morningDeliveryItems);
+      builtEvening = buildValidLines(formData.eveningDeliveryItems);
+      if (builtMorning.length === 0) {
+        Alert.alert('Error', 'Morning: add at least one milk type with quantity and rate.');
+        return;
+      }
+      if (builtEvening.length === 0) {
+        Alert.alert('Error', 'Evening: add at least one milk type with quantity and rate.');
+        return;
+      }
+      const dM = dupSource(builtMorning);
+      if (dM) {
+        Alert.alert('Error', `Morning: duplicate milk type (${dM}). One row per type.`);
+        return;
+      }
+      const dE = dupSource(builtEvening);
+      if (dE) {
+        Alert.alert('Error', `Evening: duplicate milk type (${dE}). One row per type.`);
+        return;
+      }
+      builtItems = [...builtMorning, ...builtEvening];
+    } else {
+      builtItems = buildValidLines(formData.deliveryItems);
+      if (builtItems.length === 0) {
+        Alert.alert('Error', 'Add at least one milk type with quantity (L) and rate (₹/L)');
+        return;
+      }
     }
 
     if (formData.billingMode === 'custom') {
@@ -652,7 +772,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
 
     try {
       setLoading(true);
-      const first = builtItems[0];
+      const first = formData.deliveryShift === 'both' ? builtMorning[0] : builtItems[0];
       const fixedPrice = first.rate;
       const dailyQuantity = builtItems.reduce((s, it) => s + it.quantity, 0);
       const milkSource = first.milkSource;
@@ -689,7 +809,15 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
           ? new Date(formData.deliveryCycleStartDate).toISOString()
           : null;
       }
-      deliveryPayload.deliveryItems = builtItems;
+      if (formData.deliveryShift === 'both') {
+        deliveryPayload.morningDeliveryItems = builtMorning;
+        deliveryPayload.eveningDeliveryItems = builtEvening;
+        deliveryPayload.deliveryItems = null;
+      } else {
+        deliveryPayload.deliveryItems = builtItems;
+        deliveryPayload.morningDeliveryItems = null;
+        deliveryPayload.eveningDeliveryItems = null;
+      }
       deliveryPayload.quantity = first.quantity;
       deliveryPayload.rate = first.rate;
       deliveryPayload.milkSource = milkSource;
@@ -717,15 +845,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
         await buyerService.updateBuyer(newBuyer._id, deliveryPayload);
       }
 
-      setFormData({
-        name: '', mobile: '', email: '', milkFixedPrice: '', dailyMilkQuantity: '', milkSource: 'cow',
-        deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
-        deliveryScheduleType: 'daily', deliveryDays: [], deliveryCycleDays: '2',
-        deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
-        billingMode: 'none',
-        billingDayOfMonth: '',
-        deliveryShift: 'both',
-      });
+      setFormData(emptyAddBuyerForm());
       setShowAddForm(false);
       await loadData(true);
 
@@ -823,6 +943,10 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
               const fifoRemainingUpTo = keysUpToFifo.reduce((s, k) => s + (Number(fifoRemainingByMonth[k]) || 0), 0);
               const fifoPaid = fifoRemainingUpTo <= 0.0001;
               const monthEntries = ledger?.entries || [];
+              const exportPdfKey = `${String(buyer._id)}-${selectedMonth}-pdf`;
+              const exportExcelKey = `${String(buyer._id)}-${selectedMonth}-excel`;
+              const pdfLoading = ledgerExportLoading === exportPdfKey;
+              const excelLoading = ledgerExportLoading === exportExcelKey;
 
               return (
                 <View
@@ -1076,6 +1200,33 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                             </Text>
                           </View>
 
+                          <View style={styles.ledgerExportRow}>
+                            <TouchableOpacity
+                              style={[styles.ledgerExportBtn, pdfLoading && styles.ledgerExportBtnDisabled]}
+                              onPress={() => handleDownloadMonthLedger(buyer, selectedMonth, 'pdf')}
+                              disabled={!!pdfLoading || !!excelLoading || ledgerLoading}
+                              activeOpacity={0.8}
+                            >
+                              {pdfLoading ? (
+                                <ActivityIndicator size="small" color="#1565C0" />
+                              ) : (
+                                <Text style={styles.ledgerExportBtnText}>📄 PDF Ledger</Text>
+                              )}
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[styles.ledgerExportBtn, styles.ledgerExportBtnExcel, excelLoading && styles.ledgerExportBtnDisabled]}
+                              onPress={() => handleDownloadMonthLedger(buyer, selectedMonth, 'excel')}
+                              disabled={!!pdfLoading || !!excelLoading || ledgerLoading}
+                              activeOpacity={0.8}
+                            >
+                              {excelLoading ? (
+                                <ActivityIndicator size="small" color="#2e7d32" />
+                              ) : (
+                                <Text style={[styles.ledgerExportBtnText, styles.ledgerExportBtnTextExcel]}>📊 Excel Ledger</Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+
                           {canEditUsers && (
                             <View style={styles.monthActionsRow}>
                               <TouchableOpacity style={styles.addMilkTxButton} onPress={() => openAddMilkModal(buyer)} activeOpacity={0.7}>
@@ -1205,11 +1356,11 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
       </ScrollView>
 
       <TouchableOpacity
-        style={styles.payFab}
-        onPress={() => onNavigate('Payments')}
+        style={styles.addBuyerFab}
+        onPress={() => setShowAddForm(true)}
         activeOpacity={0.8}
       >
-        <Text style={styles.payFabText}>Pay</Text>
+        <Text style={styles.addBuyerFabText}>+ Add Buyer</Text>
       </TouchableOpacity>
 
       <BuyerEditModal
@@ -1233,15 +1384,7 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
               <TouchableOpacity
                 onPress={() => {
                   setShowAddForm(false);
-                  setFormData({
-                    name: '', mobile: '', email: '', milkFixedPrice: '', dailyMilkQuantity: '', milkSource: 'cow',
-                    deliveryItems: [{ milkSource: 'cow', quantity: '', rate: '' }],
-                    deliveryScheduleType: 'daily', deliveryDays: [], deliveryCycleDays: '2',
-                    deliveryCycleStartDate: new Date().toISOString().slice(0, 10),
-                    billingMode: 'none',
-                    billingDayOfMonth: '',
-                    deliveryShift: 'both',
-                  });
+                  setFormData(emptyAddBuyerForm());
                 }}
                 style={styles.closeButton}
                 >
@@ -1277,80 +1420,8 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                 style={styles.input}
               />
 
-              <Text style={styles.label}>Milk delivery (per day) *</Text>
-              <Text style={styles.hint}>Add one or more milk types with quantity and rate. Quick Sale &quot;Delivered&quot; will create all in one go.</Text>
-              {(formData.deliveryItems || []).map((item, idx) => (
-                <View key={idx} style={styles.deliveryItemCard}>
-                  <Text style={styles.deliveryItemCardTitle}>Milk type</Text>
-                  <View style={styles.deliveryItemSourceRow}>
-                    {MILK_SOURCE_TYPES.map((src) => {
-                      const isActive = item.milkSource === src.value;
-                      return (
-                        <TouchableOpacity
-                          key={src.value}
-                          style={[styles.milkSourceChip, isActive && styles.milkSourceChipActive]}
-                          onPress={() => {
-                            const next = [...(formData.deliveryItems || [])];
-                            next[idx] = { ...next[idx], milkSource: src.value };
-                            setFormData({ ...formData, deliveryItems: next });
-                          }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.milkSourceChipText, isActive && styles.milkSourceChipTextActive]}>{src.label}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  <View style={styles.deliveryItemInputRow}>
-                    <View style={styles.deliveryItemField}>
-                      <Text style={styles.deliveryItemFieldLabel}>Qty (L)</Text>
-                      <Input
-                        placeholder="0"
-                        value={item.quantity}
-                        onChangeText={(text) => {
-                          const next = [...(formData.deliveryItems || [])];
-                          next[idx] = { ...next[idx], quantity: text };
-                          setFormData({ ...formData, deliveryItems: next });
-                        }}
-                        keyboardType="decimal-pad"
-                        style={[styles.input, styles.deliveryItemInput]}
-                      />
-                    </View>
-                    <View style={styles.deliveryItemField}>
-                      <Text style={styles.deliveryItemFieldLabel}>Rate (₹/L)</Text>
-                      <Input
-                        placeholder="0"
-                        value={item.rate}
-                        onChangeText={(text) => {
-                          const next = [...(formData.deliveryItems || [])];
-                          next[idx] = { ...next[idx], rate: text };
-                          setFormData({ ...formData, deliveryItems: next });
-                        }}
-                        keyboardType="decimal-pad"
-                        style={[styles.input, styles.deliveryItemInput]}
-                      />
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => {
-                        const next = (formData.deliveryItems || []).filter((_, i) => i !== idx);
-                        setFormData({ ...formData, deliveryItems: next.length ? next : [{ milkSource: 'cow', quantity: '', rate: '' }] });
-                      }}
-                      style={styles.removeItemBtn}
-                    >
-                      <Text style={styles.removeItemBtnText}>Remove</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-              <TouchableOpacity
-                style={styles.addDeliveryItemBtn}
-                onPress={() => setFormData({ ...formData, deliveryItems: [...(formData.deliveryItems || []), { milkSource: 'cow', quantity: '', rate: '' }] })}
-              >
-                <Text style={styles.addDeliveryItemBtnText}>+ Add another milk type</Text>
-              </TouchableOpacity>
-
               <Text style={styles.label}>Delivery shift (Quick Sale)</Text>
-              <Text style={styles.hint}>Which delivery round applies: morning, evening, or both.</Text>
+              <Text style={styles.hint}>Morning / evening only, or both rounds with separate milk per round.</Text>
               <View style={styles.billingModeRow}>
                 {[
                   { id: 'morning', label: 'Morning' },
@@ -1360,13 +1431,43 @@ export default function BuyerScreen({ onNavigate, onLogout, initialFocusMobile, 
                   <TouchableOpacity
                     key={opt.id}
                     style={[styles.billingModeChip, formData.deliveryShift === opt.id && styles.billingModeChipActive]}
-                    onPress={() => setFormData({ ...formData, deliveryShift: opt.id })}
+                    onPress={() => applyAddDeliveryShiftChange(opt.id)}
                     activeOpacity={0.7}
                   >
                     <Text style={[styles.billingModeChipText, formData.deliveryShift === opt.id && styles.billingModeChipTextActive]}>{opt.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {formData.deliveryShift === 'both' ? (
+                <>
+                  <MilkLinesBlock
+                    sectionTitle="Morning milk *"
+                    sectionHint="One row per milk type (no duplicate type). Add lines for cow, buffalo, etc."
+                    lines={formData.morningDeliveryItems}
+                    onChangeLines={(next) => setFormData((fd) => ({ ...fd, morningDeliveryItems: next }))}
+                    uniqueSources
+                    styles={styles}
+                  />
+                  <MilkLinesBlock
+                    sectionTitle="Evening milk *"
+                    sectionHint="Separate from morning. Same rules: one row per type in this round."
+                    lines={formData.eveningDeliveryItems}
+                    onChangeLines={(next) => setFormData((fd) => ({ ...fd, eveningDeliveryItems: next }))}
+                    uniqueSources
+                    styles={styles}
+                  />
+                </>
+              ) : (
+                <MilkLinesBlock
+                  sectionTitle="Milk delivery (per day) *"
+                  sectionHint={'Add one or more milk types with quantity and rate. Quick Sale "Delivered" uses this for that shift.'}
+                  lines={formData.deliveryItems}
+                  onChangeLines={(next) => setFormData((fd) => ({ ...fd, deliveryItems: next }))}
+                  uniqueSources={false}
+                  styles={styles}
+                />
+              )}
 
               <Text style={styles.label}>Auto billing</Text>
               <Text style={styles.hint}>Bill closes at 23:59 IST. Pick how often to generate a bill.</Text>
@@ -1738,14 +1839,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#f5f5f5',
   },
   // Date range strip removed (moved to month-wise ledger tabs inside each buyer).
-  payFab: {
+  addBuyerFab: {
     position: 'absolute',
     bottom: 24,
     right: 24,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#2196F3',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 28,
+    backgroundColor: '#4CAF50',
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 6,
@@ -1754,10 +1855,43 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
   },
-  payFabText: {
+  addBuyerFabText: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '700',
+  },
+  ledgerExportRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  ledgerExportBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#E3F2FD',
+    borderWidth: 1,
+    borderColor: '#90CAF9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 42,
+  },
+  ledgerExportBtnExcel: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#A5D6A7',
+  },
+  ledgerExportBtnDisabled: {
+    opacity: 0.65,
+  },
+  ledgerExportBtnText: {
+    color: '#1565C0',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  ledgerExportBtnTextExcel: {
+    color: '#2e7d32',
   },
   content: {
     flex: 1,
@@ -2427,6 +2561,12 @@ const styles = StyleSheet.create({
   },
   milkSourceChipTextActive: {
     color: '#fff',
+  },
+  milkSourceChipDisabled: {
+    opacity: 0.45,
+  },
+  milkSourceChipDisabledText: {
+    color: '#999',
   },
   deliveryItemInputRow: {
     flexDirection: 'row',

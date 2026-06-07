@@ -8,6 +8,10 @@ const {
   ensureMonthlySummariesForMonth,
   getBuyerMonthLedger,
 } = require("../services/buyerBalance.service");
+const {
+  generateBuyerMonthLedgerPdf,
+  generateBuyerMonthLedgerExcel,
+} = require("../services/buyerLedgerExport.service");
 
 /**
  * Get all buyers with user details
@@ -502,6 +506,54 @@ const getBuyerMonthLedgerController = async (req, res) => {
   }
 };
 
+/**
+ * Admin: download month ledger as PDF (tally-style).
+ * GET /buyers/:id/month-ledger/export/pdf?monthKey=YYYY-MM
+ */
+const downloadBuyerMonthLedgerPdfController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const monthKey = String(req.query.monthKey || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ error: "monthKey is required (YYYY-MM)" });
+    }
+    const buyer = await getBuyerById(id);
+    if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+    const result = await generateBuyerMonthLedgerPdf(buyer._id, monthKey);
+    if (!result) return res.status(404).json({ error: "Buyer not found" });
+    res.setHeader("Content-Type", result.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    return res.send(result.buffer);
+  } catch (error) {
+    console.error("[buyers] downloadBuyerMonthLedgerPdf:", error);
+    return res.status(500).json({ error: "Failed to generate PDF", message: error.message });
+  }
+};
+
+/**
+ * Admin: download month ledger as Excel (tally-style).
+ * GET /buyers/:id/month-ledger/export/excel?monthKey=YYYY-MM
+ */
+const downloadBuyerMonthLedgerExcelController = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const monthKey = String(req.query.monthKey || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+      return res.status(400).json({ error: "monthKey is required (YYYY-MM)" });
+    }
+    const buyer = await getBuyerById(id);
+    if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+    const result = await generateBuyerMonthLedgerExcel(buyer._id, monthKey);
+    if (!result) return res.status(404).json({ error: "Buyer not found" });
+    res.setHeader("Content-Type", result.contentType);
+    res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    return res.send(result.buffer);
+  } catch (error) {
+    console.error("[buyers] downloadBuyerMonthLedgerExcel:", error);
+    return res.status(500).json({ error: "Failed to generate Excel", message: error.message });
+  }
+};
+
 module.exports = {
   listBuyers,
   getMyBuyerProfile,
@@ -515,5 +567,7 @@ module.exports = {
   rebuildBuyerBalanceController,
   listBuyerMonthlySummariesByMonthKeyController,
   getBuyerMonthLedgerController,
+  downloadBuyerMonthLedgerPdfController,
+  downloadBuyerMonthLedgerExcelController,
 };
 
